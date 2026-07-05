@@ -53,9 +53,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_octopus", "BI_results_m205.csv")
-DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "amplitudes_m205.csv")
-DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "timing_SNR_m205.csv")
+DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205.csv")
+DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "m205_results_wiener", "amplitudes_m205.csv")
+DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_wiener", "timing_SNR_m205.csv")
 MEAS_NAME       = "000205"
 
 # Canali esclusi di default (in aggiunta a quelli passati con --exclude)

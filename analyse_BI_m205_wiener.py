@@ -70,7 +70,7 @@ MEAS_NAME = "000205"
 
 # ── CSV delle ampiezze scritto da plot_all_root.py (LOAD_CURVE)
 #    Atteso con colonne: channel, vbias_V, risetime_ms, amplitude_mV
-AMP_CSV = os.path.join(DATA_DIR, "amplitudes_m205.csv")
+AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Cluster / scheduler config  (ADATTA al tuo cluster)

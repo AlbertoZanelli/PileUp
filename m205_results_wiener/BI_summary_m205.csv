@@ -1,0 +1,6 @@
+channel,best_vbias_V,min_BI,SNR_at_best,risetime_ms_at_best,decaytime_ms_at_best,amplitude_mV_at_best,hf_power_at_best
+31,40.000,5.667258e-05,18.4928,,,,
+34,40.000,6.916344e-05,75.3254,,,,
+71,40.000,4.650667e-05,35.6293,,,,
+83,40.000,5.961246e-05,48.1733,,,,
+91,30.000,1.462752e-04,10.0184,,,,
