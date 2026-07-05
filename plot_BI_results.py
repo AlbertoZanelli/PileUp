@@ -39,8 +39,9 @@ Uso:
     python plot_BI_results.py
     python plot_BI_results.py --exclude 31 94
     python plot_BI_results.py --bi-csv path/BI.csv --amp-csv path/amp.csv --outdir path/
-    # risultati Wiener (con grafico lambda vs V_bias):
-    python plot_BI_results.py --bi-csv m205_results_wiener/BI_results_m205_wiener.csv
+    # modalità Wiener: percorsi in m205_results_wiener e output con suffisso _wiener
+    # (grafico lambda vs V_bias incluso):
+    python plot_BI_results.py --wiener
 """
 
 import os
@@ -56,6 +57,9 @@ BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_octopus", "BI_results_m205.csv")
 DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "amplitudes_m205.csv")
 DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "timing_SNR_m205.csv")
+# Modalità Wiener (--wiener): risultati di analyse_BI_m205_wiener.py. Le ampiezze
+# sono le stesse (proprietà del template), quindi cambia solo il CSV dei BI.
+DEFAULT_BI_CSV_WIENER = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205_wiener.csv")
 MEAS_NAME       = "000205"
 
 # Canali esclusi di default (in aggiunta a quelli passati con --exclude)
@@ -410,7 +414,12 @@ def summarize_best(rows, out_csv, out_png, colors):
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser(description="Analisi e plot dei risultati BI (m205).")
-    parser.add_argument("--bi-csv", default=DEFAULT_BI_CSV, help="CSV dei risultati BI")
+    parser.add_argument("--wiener", action="store_true",
+                        help="modalità Wiener: usa i risultati di analyse_BI_m205_wiener.py "
+                             "(m205_results_wiener) e aggiunge il suffisso _wiener a TUTTI i "
+                             "file di output. --bi-csv/--outdir espliciti hanno la precedenza.")
+    parser.add_argument("--bi-csv", default=None,
+                        help="CSV dei risultati BI (default: dipende da --wiener)")
     parser.add_argument("--amp-csv", default=DEFAULT_AMP_CSV, help="CSV ampiezze/timing/spettro")
     parser.add_argument("--timing-csv", default=DEFAULT_TIMING_CSV,
                         help="CSV timing (fallback per rho_t=SNR*beta se non gia' nel BI CSV)")
@@ -418,6 +427,13 @@ def main():
     parser.add_argument("--exclude", nargs="*", type=int, default=None,
                         help="canali da escludere, es. --exclude 31 94")
     args = parser.parse_args()
+
+    # ── Risoluzione della modalità → percorsi e suffisso dei file di output ─────
+    #   In modalità Wiener: BI CSV di default in m205_results_wiener e suffisso
+    #   "_wiener" su ogni output; un --bi-csv esplicito resta comunque rispettato.
+    suffix = "_wiener" if args.wiener else ""
+    if args.bi_csv is None:
+        args.bi_csv = DEFAULT_BI_CSV_WIENER if args.wiener else DEFAULT_BI_CSV
 
     if not os.path.exists(args.bi_csv):
         raise SystemExit(f"[ERROR] CSV BI non trovato: {args.bi_csv}")
@@ -453,7 +469,10 @@ def main():
     colors = channel_colors([r["channel"] for r in rows])
 
     def p(name):
-        return os.path.join(outdir, name)
+        """Percorso di output: inserisce il suffisso di modalità (es. _wiener)
+        prima dell'estensione, così tutti i file cambiano nome coerentemente."""
+        root, ext = os.path.splitext(name)
+        return os.path.join(outdir, f"{root}{suffix}{ext}")
 
     n_ch = len(set(r["channel"] for r in rows))
     print(f"Dati: {len(rows)} punti su {n_ch} canali.\nGenero i plot in {outdir}:")
@@ -497,9 +516,10 @@ def main():
     ax.set_title(f"BI vs Bias Voltage — Measurement {MEAS_NAME}", fontsize=14)
     ax.legend(fontsize=10)
     fig.tight_layout()
-    fig.savefig(p("BI_vs_Vbias_m205.png"), dpi=200)
+    out_bi_vbias = p("BI_vs_Vbias_m205.png")
+    fig.savefig(out_bi_vbias, dpi=200)
     plt.close(fig)
-    print("  → BI_vs_Vbias_m205.png")
+    print(f"  → {os.path.basename(out_bi_vbias)}")
 
     # ── lambda del Wiener vs V_bias (solo se il CSV ha lambda_wiener) ───────────
     #    Presente nei risultati di analyse_BI_m205_wiener.py; assente nel filtro
@@ -516,8 +536,9 @@ def main():
                          fontsize=14)
             ax.legend(fontsize=9)
             fig.tight_layout()
-            fig.savefig(p("lambda_vs_Vbias_m205.png"), dpi=200)
-            print("  → lambda_vs_Vbias_m205.png")
+            out_lambda = p("lambda_vs_Vbias_m205.png")
+            fig.savefig(out_lambda, dpi=200)
+            print(f"  → {os.path.basename(out_lambda)}")
         plt.close(fig)
 
     # ── Scatter 3D interattivo BI vs SNR vs risetime (HTML) ─────────────────────
