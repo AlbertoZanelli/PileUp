@@ -1,6 +1,21 @@
 """
-analyze_BI_m205.py
-==================
+analyse_BI_m205_wiener.py
+=========================
+Versione PARALLELA di analyse_BI_m205.py che, al posto del filtro ottimo, usa il
+filtro di WIENER con fattore di modulazione del rumore lambda ADDESTRABILE
+(optimize_filters_wiener_lambda in src/analysis.py). Il kernel di Wiener e'
+
+    W_lambda = S* / ( |S|^2 + lambda * NPS )
+
+e lambda (>0, parametrizzato come exp(log_lambda)) viene ottimizzato insieme ai
+filtri di banda f1, f2 minimizzando la stessa metrica J del BI. lambda=1 riproduce
+il Wiener standard (CUORE norm_type=0); lambda->0 tende alla deconvoluzione pura,
+lambda->inf al filtro ottimo. Il lambda ottimizzato viene salvato nel CSV.
+
+Tutto il resto (orchestratore/worker su cluster, CSV concorrenza-safe, beta/rho_t)
+e' identico ad analyse_BI_m205.py; cambiano solo la stima del BI, le cartelle di
+output (m205_results_wiener) e il prefisso dei job (BIW).
+
 Stima del BI per la misura m205 (load curves), parallelizzata sul cluster:
 viene mandato un job indipendente per OGNI coppia (canale, WP).
 
@@ -14,8 +29,8 @@ Flusso:
   3. Il plot si fa a parte, con plot_BI_results.py, leggendo il CSV.
 
 Esempi:
-    python analyze_BI_m205.py                                  # sottomette i job e chiude
-    python analyze_BI_m205.py --worker --channel 71 --wp 21    # eseguito dai job
+    python analyse_BI_m205_wiener.py                                # sottomette i job e chiude
+    python analyse_BI_m205_wiener.py --worker --channel 71 --wp 21  # eseguito dai job
 
 Le ampiezze del segnale vengono lette dal CSV prodotto da plot_all_root.py
 (LOAD_CURVE), per ogni coppia (canale, V_bias).
@@ -46,10 +61,10 @@ import uproot        # serve all'orchestratore per elencare i WP
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
-OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results")
+OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_wiener")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
-OUTPUT_CSV  = os.path.join(OUTPUT_DIR, "BI_results_m205.csv")
+OUTPUT_CSV  = os.path.join(OUTPUT_DIR, "BI_results_m205_wiener.csv")
 
 MEAS_NAME = "000205"
 
@@ -66,7 +81,7 @@ WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
-JOB_NAME_PREFIX   = "BI"      # usato per nominare i job e per il throttling via qstat
+JOB_NAME_PREFIX   = "BIW"     # usato per nominare i job e per il throttling via qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
 RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
@@ -118,16 +133,17 @@ ACCEPTANCE = 0.9
 WINDOW_SIZE = 10_000
 SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
-N_TRIALS = 300
+N_TRIALS = 800
 
 T_MIN, T_MAX, N_T = 0, 8e-4, 100
 R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 
 # Colonne del CSV dei risultati
-#   beta_Hz = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
-#   rho_t   = SNR * beta  = figura di merito temporale per il pile-up (Hz)
+#   beta_Hz       = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
+#   rho_t         = SNR * beta  = figura di merito temporale per il pile-up (Hz)
+#   lambda_wiener = fattore di modulazione del rumore del Wiener, ottimizzato
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "lambda_wiener", "BI", "J_final"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -184,8 +200,13 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
     import src.analysis as an
     import utility.functions as fn
 
-    # ── Optimal filter ────────────────────────────────────────────────────────
-    S, w, H_unit = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=samp_rate)
+    # ── Trasformata del template + riferimenti del filtro ottimo ───────────────
+    #   S = FFT del pulse finestrato (Hanning); w = 2*pi*f. sigma_analytic, SNR e
+    #   beta sono quantita' di RIFERIMENTO del filtro ottimo (proprieta' del
+    #   template, indipendenti dal filtro di pile-up). Il kernel di Wiener NON
+    #   viene precalcolato qui: optimize_filters_wiener_lambda lo ricostruisce
+    #   internamente (compute_W_torch) in funzione del lambda addestrabile.
+    S, w, _ = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=samp_rate)
     sigma_analytic = an.compute_sigma_OF(S, nps)
 
     # ── Figura di merito temporale (Cramer-Rao sul tempo di arrivo) ────────────
@@ -203,24 +224,27 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         return torch.tensor(np.asarray(arr), dtype=dtype, device=device)
 
     S_torch = to_t(S)
-    H_unit_torch = to_t(H_unit)
     w_torch = to_t(w)
     nps_torch = to_t(nps)
     signal_amp_torch = torch.tensor(signal_amp, dtype=torch.float32, device=device)
 
-    # ── Optimise filters ──────────────────────────────────────────────────────
-    f1_opt, f2_opt, J_values = an.optimize_filters(
-        S_torch, H_unit_torch, w_torch,
-        shared["t_torch"], shared["r_torch"], nps_torch,
-        signal_amp_torch, shared["ratio_distribution_torch"],
-        N_sigma = shared["N_sigma"],
-        activation_fct = torch.abs,
-        f1_init = None,
-        f2_init = None,
-        n_trials = N_TRIALS,
-        use_interp = True,
-        verbose = False,
-    )
+    # ── Optimise Wiener band-filters + trainable lambda ────────────────────────
+    #   Il kernel W = S* / (|S|^2 + lambda*NPS) e' ricostruito ad ogni step in
+    #   funzione di lambda; f1, f2 e lambda sono ottimizzati insieme minimizzando J.
+    f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
+        an.optimize_filters_wiener_lambda(
+            S_torch, w_torch,
+            shared["t_torch"], shared["r_torch"], nps_torch,
+            signal_amp_torch, shared["ratio_distribution_torch"],
+            N_sigma = shared["N_sigma"],
+            activation_fct = torch.abs,
+            f1_init = None,
+            f2_init = None,
+            lambda_init = 1.0,
+            n_trials = N_TRIALS,
+            use_interp = True,
+            verbose = False,
+        )
 
     BI_estimate = float(J_values[-1]) * fn.K
 
@@ -233,6 +257,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "SNR": SNR,
         "beta_Hz": beta_Hz,
         "rho_t": rho_t,
+        "lambda_wiener": float(lam_opt),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
     }

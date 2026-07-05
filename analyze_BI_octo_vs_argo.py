@@ -69,8 +69,18 @@ OCTO_MEAS = "000204"
 HIST_AP_NAME = "averagepulse_ap_medianAP"
 ARGO_BIN_DTYPE = np.float64
 
+# Channels excluded from the whole analysis (drivers, plots, CSV).
+EXCLUDE_CHANNELS = [41]
+
 # m204 acquisition sampling rate (window 800 -> 0.4 s, dt = 0.5 ms).
 SAMPLING_RATE_HZ = 2000.0
+
+# High-frequency cutoff (Hz) above which the average-pulse spectrum is pure noise:
+# the pulse is low-pass, so past ~Nyquist/2 the signal PSD is negligible and any
+# residual power there is noise leaked into the template. Integrating the AP PSD
+# above this cutoff gives a single number for that noise. The choice f=500 Hz
+# (= Nyquist/2) sits in the plateau where the |dBI| correlation is maximal.
+F_CUT_HF = 500.0
 
 # Pre-trigger fraction of the window: the peak sits at ~50% (pretrigger/windowlen
 # = 0.2/0.4). We measure the noise on the flat baseline strictly BEFORE the rise,
@@ -124,11 +134,31 @@ def baseline_rms(ap: np.ndarray) -> float:
     return float(base.std())
 
 
+def hf_power(ap: np.ndarray, sampling_rate: float = SAMPLING_RATE_HZ,
+             f_cut: float = F_CUT_HF) -> float:
+    """
+    High-frequency power of the average pulse: the AP power spectrum integrated
+    above ``f_cut``. There the pulse (low-pass) has no signal left, so this is a
+    direct, single-number measure of the noise leaked into the template. The AP
+    is peak-normalized first, so the value is comparable across channels/pipelines.
+    """
+    ap = np.asarray(ap, dtype=float)
+    peak = ap.max()
+    if peak <= 0:
+        return np.nan
+    freq, psd = compute_psd(ap / peak, sampling_rate)
+    return float(psd[freq >= f_cut].sum())
+
+
 # ── Analysis ─────────────────────────────────────────────────────────────────
 def build_table() -> pd.DataFrame:
     octo = pd.read_csv(OCTO_CSV).add_suffix("_octo").rename(columns={"channel_octo": "channel"})
     argo = pd.read_csv(ARGO_CSV).add_suffix("_argo").rename(columns={"channel_argo": "channel"})
     df = pd.merge(octo, argo, on="channel", how="inner").sort_values("channel").reset_index(drop=True)
+
+    # Drop excluded channels up front, so nothing downstream loads or plots them.
+    if EXCLUDE_CHANNELS:
+        df = df[~df["channel"].isin(EXCLUDE_CHANNELS)].reset_index(drop=True)
 
     # Optional pulse-shape variables (risetime_ms, freq_sigma_Hz), one per pipeline.
     for path, suff in [(OCTO_RT_CSV, "octo"), (ARGO_RT_CSV, "argo")]:
@@ -136,19 +166,23 @@ def build_table() -> pd.DataFrame:
             rt = pd.read_csv(path).add_suffix(f"_{suff}").rename(columns={f"channel_{suff}": "channel"})
             df = pd.merge(df, rt, on="channel", how="left")
 
-    # Residual noise of each AP template.
-    noise_o, noise_a = [], []
+    # Residual noise of each AP template: broadband time-domain RMS on the flat
+    # baseline, and the frequency-domain high-frequency power (>F_CUT_HF).
+    noise_o, noise_a, hf_o, hf_a = [], [], [], []
     for ch in df["channel"].astype(int):
-        noise_o.append(baseline_rms(load_octo_ap(ch)))
-        noise_a.append(baseline_rms(load_argo_ap(ch)))
+        apo, apa = load_octo_ap(ch), load_argo_ap(ch)
+        noise_o.append(baseline_rms(apo)); noise_a.append(baseline_rms(apa))
+        hf_o.append(hf_power(apo));        hf_a.append(hf_power(apa))
     df["ap_noise_octo"] = noise_o
     df["ap_noise_argo"] = noise_a
     df["ap_noise_ratio"] = df["ap_noise_octo"] / df["ap_noise_argo"]
+    df["ap_hfpow_octo"] = hf_o
+    df["ap_hfpow_argo"] = hf_a
 
     # Relative differences (Argonauts vs Octopus, in %). Pulse-shape vars are
     # included only if their CSVs were merged in above.
     diff_vars = ["BI", "signal_amp", "sigma_analytic", "SNR"]
-    for v in ["risetime_ms", "freq_sigma_Hz"]:
+    for v in ["risetime_ms"]:
         if f"{v}_octo" in df.columns and f"{v}_argo" in df.columns:
             diff_vars.append(v)
     for var in diff_vars:
@@ -162,6 +196,8 @@ def build_table() -> pd.DataFrame:
     # Sign convention: positive => OCTOPUS is the noisier template.
     o, a = df["ap_noise_octo"], df["ap_noise_argo"]
     df["ap_noise_diff_pct"] = (o - a) / ((o + a) / 2.0) * 100.0
+    ho, ha = df["ap_hfpow_octo"], df["ap_hfpow_argo"]
+    df["ap_hfpow_diff_pct"] = (ho - ha) / ((ho + ha) / 2.0) * 100.0
     return df
 
 
@@ -195,10 +231,10 @@ def plot_drivers(df: pd.DataFrame, path: str):
     """
     # Candidate drivers, all as signed percentage differences (Argo - Octo).
     candidates = [
+        ("ap_hfpow_diff_pct",       r"$\Delta$ AP HF-power [%] (sym, >500 Hz)"),
         ("ap_noise_diff_pct",       r"$\Delta$ AP-noise RMS [%] (sym)"),
         ("sigma_analytic_diff_pct", r"$\Delta$ $\sigma_{OF}$ [%]"),
         ("risetime_ms_diff_pct",    r"$\Delta$ risetime [%]"),
-        ("freq_sigma_Hz_diff_pct",  r"$\Delta$ freq $\sigma$ [%]"),
         ("signal_amp_diff_pct",     r"$\Delta$ amplitude [%]"),
         ("SNR_diff_pct",            r"$\Delta$ SNR [%]"),
     ]
@@ -352,6 +388,7 @@ def plot_ap_psd_all(df: pd.DataFrame, path: str):
     fig, axf = _grid(len(chans))
     fig.suptitle("Average-pulse power spectrum — Octopus vs Argonauts (run m204)",
                  fontsize=15, fontweight="bold")
+    row_by_ch = {int(r["channel"]): r for _, r in df.iterrows()}
     for ax, ch in zip(axf, chans):
         apo = load_octo_ap(ch); apo = apo / apo.max()
         apa = load_argo_ap(ch); apa = apa / apa.max()
@@ -359,7 +396,10 @@ def plot_ap_psd_all(df: pd.DataFrame, path: str):
         f_a, psd_a = compute_psd(apa, SAMPLING_RATE_HZ)
         ax.loglog(f_o[1:], psd_o[1:], color="steelblue", lw=1.0, label="Octopus")
         ax.loglog(f_a[1:], psd_a[1:], color="darkorange", lw=1.0, label="Argonauts")
-        ax.set_title(f"Ch {ch}")
+        # Shade the pure-noise band and print its Octo-vs-Argo percentage excess.
+        ax.axvspan(F_CUT_HF, SAMPLING_RATE_HZ / 2, color="grey", alpha=0.12)
+        hf_pct = row_by_ch[ch].get("ap_hfpow_diff_pct", np.nan)
+        ax.set_title(f"Ch {ch}   HF $\\Delta$={hf_pct:+.0f}%")
         ax.set_xlabel("frequency [Hz]"); ax.set_ylabel("PSD [a.u.]")
         ax.grid(True, which="both", alpha=0.3)
     axf[0].legend(fontsize=9)
@@ -387,10 +427,10 @@ def main():
           float_format=lambda v: f"{v:.3e}" if abs(v) < 1e-2 else f"{v:.2f}"))
     print("=" * 92)
     print("\nPearson r of Delta BI % (signed) vs percentage-difference drivers:")
-    candidates = [("ap_noise_diff_pct", "AP-noise RMS diff [%] (sym)"),
+    candidates = [("ap_hfpow_diff_pct", "AP HF-power diff [%] (>500Hz)"),
+                  ("ap_noise_diff_pct", "AP-noise RMS diff [%] (sym)"),
                   ("sigma_analytic_diff_pct", "sigma_OF diff [%]"),
                   ("risetime_ms_diff_pct", "risetime diff [%]"),
-                  ("freq_sigma_Hz_diff_pct", "freq_sigma diff [%]"),
                   ("signal_amp_diff_pct", "amplitude diff [%]"),
                   ("SNR_diff_pct", "SNR diff [%]")]
     ranking = [(lbl, pearson(df[col], df["BI_diff_pct"]))

@@ -4,15 +4,20 @@ risetime_and_amplitude.py
 -----------------------
 Analyzes the channel signals.
 
+Per-pulse observables: Risetime (10->90%), Decaytime (90->10%) and AP HF-power
+(power spectrum integrated above HF_CUT_HZ, a proxy for residual noise in the
+template — the metric adopted in the m204 study). Freq-sigma has been retired.
+
 Available modes (ANALYSIS_MODE):
   - "LOAD_CURVE"          : Reads the load-curve ROOT files and plots
-                            Risetime/Amplitude/Freq_Sigma vs V_bias.
+                            Risetime/Decaytime/Amplitude/HF-power vs V_bias.
+                            CSV saved in LOAD_CURVE_RESULTS_DIR.
   - "AVERAGE_PULSES_BIN"  : Reads the average-pulse .bin files and plots
-                            Risetime (cubic)/Freq_Sigma vs Channel + overlaid waveforms.
+                            Risetime/Decaytime/HF-power vs Channel + overlaid waveforms.
   - "AVERAGE_PULSES_ROOT" : Reads SINGLE-RUN (no load curve) Octopus ROOT files,
                             one per channel, each holding the 'averagepulse_ap_medianAP'
                             histogram (same files handled by analyze_BI_singlerun.py).
-                            Plots Risetime (cubic)/Freq_Sigma vs Channel + overlaid
+                            Plots Risetime/Decaytime/HF-power vs Channel + overlaid
                             waveforms, exactly like AVERAGE_PULSES_BIN but from ROOT.
 """
 
@@ -30,13 +35,14 @@ except ImportError:
 
 
 # ── User settings ──────────────────────────────────────────────────────────────
-ANALYSIS_MODE = "AVERAGE_PULSES_BIN"   # "LOAD_CURVE" | "AVERAGE_PULSES_BIN" | "AVERAGE_PULSES_ROOT"
+ANALYSIS_MODE = "LOAD_CURVE"   # "LOAD_CURVE" | "AVERAGE_PULSES_BIN" | "AVERAGE_PULSES_ROOT"
 BASE          = os.path.dirname(os.path.abspath(__file__))
 
 # ── Input/output locations (folders are relative to this script) ───────────────
 #   LOAD_CURVE — reads ROOT files
 LOAD_CURVE_DIR     = "Processed"                      # folder containing the .root files
 LOAD_CURVE_PATTERN = "Processed_*_000205_*.root"      # glob pattern of the files to read
+LOAD_CURVE_RESULTS_DIR    = "m205_results_octopus"                 # folder to save the results
 AMP_CSV_NAME       = "amplitudes_m205.csv"            # output CSV (amplitudes)
 
 #   AVERAGE_PULSES_BIN — reads average-pulse .bin files
@@ -91,6 +97,12 @@ SHOW_PLOTS_BIN        = False  # enable/disable interactive plots in AVERAGE_PUL
 
 
 SHOW_PLOTS_AP_ROOT    = False  # enable/disable interactive plots in AVERAGE_PULSES_ROOT
+
+# ── HF-power settings ─────────────────────────────────────────────────────────
+# Cutoff (Hz) above which the average pulse (low-pass) has no signal left, so any
+# residual power is noise leaked into the template. Integrating the AP power
+# spectrum above it gives one number for that noise (same metric used on m204).
+HF_CUT_HZ = 500.0
 
 
 def wp_to_vbias(wp_idx: int) -> float:
@@ -147,95 +159,144 @@ def risetime_cubic(pulse: np.ndarray, t_s: np.ndarray,
     return (t_90 - t_10) * 1e3
 
 
-def power_spectrum_sigma(pulse: np.ndarray, t_s: np.ndarray) -> float:
+def decaytime_cubic(pulse: np.ndarray, t_s: np.ndarray,
+                    high: float = 0.90, low: float = 0.10) -> float:
+    """Decay time 90%->10% on the FALLING edge with cubic interpolation.
+
+    Mirror of :func:`risetime_cubic`, but works on the segment after the peak and
+    detects downward threshold crossings (from >=thr to <thr)."""
+    peak_idx = int(np.argmax(np.abs(pulse)))
+    t_seg = np.asarray(t_s[peak_idx:], dtype=float)
+    p_seg = np.asarray(pulse[peak_idx:], dtype=float)
+    if len(p_seg) < 2:
+        return np.nan
+
+    peak_val = p_seg[0]
+    if peak_val == 0:
+        return np.nan
+
+    p_work   = p_seg * np.sign(peak_val)
+    peak_abs = p_work[0]
+
+    m = np.zeros_like(p_work, dtype=float)
+    m[1:-1] = (p_work[2:] - p_work[:-2]) / (t_seg[2:] - t_seg[:-2])
+    m[0]    = (p_work[1]  - p_work[0])   / (t_seg[1]  - t_seg[0])
+    m[-1]   = (p_work[-1] - p_work[-2])  / (t_seg[-1] - t_seg[-2])
+
+    def _cross(thr):
+        idxs = np.where(np.diff((p_work >= thr).astype(int)) == -1)[0]
+        if len(idxs) == 0: return np.nan
+        i  = int(idxs[0])
+        dx = float(t_seg[i + 1] - t_seg[i])
+        if dx == 0.0: return np.nan
+        y0, y1 = float(p_work[i]), float(p_work[i + 1])
+        m0, m1 = float(m[i]) * dx, float(m[i + 1]) * dx
+        a =  2.0 * (y0 - y1) + m0 + m1
+        b = -3.0 * (y0 - y1) - 2.0 * m0 - m1
+        c =  m0; d =  y0 - thr
+        roots = np.roots([a, b, c, d])
+        real_roots = roots[np.abs(roots.imag) < 1e-8].real
+        valid = real_roots[(real_roots >= -1e-9) & (real_roots <= 1.0 + 1e-9)]
+        if len(valid) == 0:
+            return t_seg[i] + (thr - y0) * dx / (y1 - y0) if y1 != y0 else t_seg[i]
+        return t_seg[i] + float(np.clip(np.min(valid), 0.0, 1.0)) * dx
+
+    t_90 = _cross(high * peak_abs)
+    t_10 = _cross(low  * peak_abs)
+
+    if np.isnan(t_90) or np.isnan(t_10) or t_10 <= t_90: return np.nan
+    return (t_10 - t_90) * 1e3
+
+
+def hf_power(pulse: np.ndarray, t_s: np.ndarray, f_cut: float = HF_CUT_HZ) -> float:
     """
-    Calcola la sigma (Spectral Spread / RMS Bandwidth) dello spettro di potenza.
-    Ritorna la deviazione standard in Hz.
+    High-frequency power of the (peak-normalized) average pulse: the AP power
+    spectrum integrated above ``f_cut``. There the low-pass pulse has no signal,
+    so this is a single-number proxy for the residual noise in the template
+    (same metric adopted in the m204 Octopus-vs-Argonauts study).
     """
+    pulse = np.asarray(pulse, dtype=float)
     if len(pulse) < 2: return np.nan
-    
     dt = float(t_s[1] - t_s[0])
     if dt <= 0: return np.nan
+    peak = np.max(np.abs(pulse))
+    if peak <= 0: return np.nan
 
-    # Spettro di potenza (ignorando la fase)
-    freqs = np.fft.rfftfreq(len(pulse), d=dt)
-    fft_vals = np.fft.rfft(pulse)
-    power_spectrum = np.abs(fft_vals)**2
-
-    # Azzera la componente DC (offset) per valutare solo la forma del segnale
-    power_spectrum[0] = 0.0
-
-    total_power = np.sum(power_spectrum)
-    if total_power == 0: return np.nan
-
-    # Calcolo della Media (Baricentro spettrale)
-    mean_f = np.sum(freqs * power_spectrum) / total_power
-
-    # Calcolo della Varianza e Sigma spettrale
-    var_f = np.sum(((freqs - mean_f)**2) * power_spectrum) / total_power
-    sigma_f = np.sqrt(var_f)
-
-    return sigma_f
+    sig = pulse / peak
+    sig = sig - np.mean(sig)
+    win = np.hanning(len(sig))
+    xw = sig * win
+    fft_vals = np.fft.rfft(xw)
+    sr = 1.0 / dt
+    psd = (np.abs(fft_vals) ** 2) / (sr * len(sig))
+    freq = np.fft.rfftfreq(len(sig), d=dt)
+    return float(np.sum(psd[freq >= f_cut]))
 
 
 def export_amplitudes_csv(out_path):
-    """Write LOAD_CURVE results to CSV (Risetime, Amp, and Freq Sigma)."""
+    """Write LOAD_CURVE results to CSV (Risetime, Decaytime, Amp, HF-power)."""
     def scale_for(ch_int):
         if not APPLY_AMP_SCALE: return 1.0
         if ch_int not in AMP_SCALE_FACTORS:
             print(f"  ⚠ Channel {ch_int}: no factor defined, using {AMP_SCALE_DEFAULT}")
         return AMP_SCALE_FACTORS.get(ch_int, AMP_SCALE_DEFAULT)
 
-    channels = sorted(set(plot_data_risetime) | set(plot_data_amplitude) | set(plot_data_freq_sigma), key=int)
+    channels = sorted(set(plot_data_risetime) | set(plot_data_decaytime) |
+                      set(plot_data_amplitude) | set(plot_data_hfpower), key=int)
 
     rows = []
     for ch in channels:
         ch_int = int(ch)
         k = scale_for(ch_int)
-        
+
         rt_map  = dict(zip(plot_data_risetime.get(ch, {"x":[]})["x"],  plot_data_risetime.get(ch, {"y":[]})["y"]))
+        dec_map = dict(zip(plot_data_decaytime.get(ch, {"x":[]})["x"], plot_data_decaytime.get(ch, {"y":[]})["y"]))
         amp_map = dict(zip(plot_data_amplitude.get(ch, {"x":[]})["x"], plot_data_amplitude.get(ch, {"y":[]})["y"]))
-        sig_map = dict(zip(plot_data_freq_sigma.get(ch, {"x":[]})["x"],plot_data_freq_sigma.get(ch, {"y":[]})["y"]))
-        
-        for vb in sorted(set(rt_map) | set(amp_map) | set(sig_map)):
+        hf_map  = dict(zip(plot_data_hfpower.get(ch, {"x":[]})["x"],   plot_data_hfpower.get(ch, {"y":[]})["y"]))
+
+        for vb in sorted(set(rt_map) | set(dec_map) | set(amp_map) | set(hf_map)):
             rt  = rt_map.get(vb)
+            dec = dec_map.get(vb)
             amp = amp_map.get(vb)
-            sig = sig_map.get(vb)
+            hf  = hf_map.get(vb)
             rows.append((
-                ch_int, float(vb), rt, 
-                amp * k * 1000 if amp is not None else None, 
-                sig
+                ch_int, float(vb), rt, dec,
+                amp * k * 1000 if amp is not None else None,
+                hf
             ))
 
     rows.sort(key=lambda r: (r[0], r[1]))
     with open(out_path, "w", newline="") as fcsv:
         writer = csv.writer(fcsv)
-        writer.writerow(["channel", "vbias_V", "risetime_ms", "amplitude_mV", "freq_sigma_Hz"])
-        for ch, vb, rt, amp, sig in rows:
+        writer.writerow(["channel", "vbias_V", "risetime_ms", "decaytime_ms", "amplitude_mV", "hf_power"])
+        for ch, vb, rt, dec, amp, hf in rows:
             writer.writerow([
                 ch, f"{vb:.3f}",
                 f"{rt:.6f}"  if rt  is not None else "",
+                f"{dec:.6f}" if dec is not None else "",
                 f"{amp:.6f}" if amp is not None else "",
-                f"{sig:.3f}" if sig is not None else "",
+                f"{hf:.6e}"  if hf  is not None else "",
             ])
 
-    print(f"✓ Data (incl. Power Spectrum Sigma) saved to: {out_path}")
+    print(f"✓ Data (incl. decaytime & HF-power) saved to: {out_path}")
 
 
 def export_risetime_csv(out_path):
-    """Write AVERAGE_PULSES_BIN results to CSV."""
+    """Write AVERAGE_PULSES results to CSV (Risetime, Decaytime, HF-power)."""
     with open(out_path, "w", newline="") as fcsv:
         writer = csv.writer(fcsv)
-        writer.writerow(["channel", "risetime_ms", "freq_sigma_Hz"])
-        for ch in sorted(set(plot_data_risetime) | set(plot_data_freq_sigma), key=int):
+        writer.writerow(["channel", "risetime_ms", "decaytime_ms", "hf_power"])
+        for ch in sorted(set(plot_data_risetime) | set(plot_data_decaytime) | set(plot_data_hfpower), key=int):
             rt  = plot_data_risetime.get(ch, np.nan)
-            sig = plot_data_freq_sigma.get(ch, np.nan)
-            
-            rt_str  = f"{rt:.6f}"  if not np.isnan(rt) else ""
-            sig_str = f"{sig:.3f}" if not np.isnan(sig) else ""
-            
-            writer.writerow([int(ch), rt_str, sig_str])
-    print(f"✓ Data (incl. Power Spectrum Sigma) saved to: {out_path}")
+            dec = plot_data_decaytime.get(ch, np.nan)
+            hf  = plot_data_hfpower.get(ch, np.nan)
+
+            rt_str  = f"{rt:.6f}"  if not np.isnan(rt)  else ""
+            dec_str = f"{dec:.6f}" if not np.isnan(dec) else ""
+            hf_str  = f"{hf:.6e}"  if not np.isnan(hf)  else ""
+
+            writer.writerow([int(ch), rt_str, dec_str, hf_str])
+    print(f"✓ Data (incl. decaytime & HF-power) saved to: {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -243,8 +304,9 @@ def export_risetime_csv(out_path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 plot_data_risetime   = {}
+plot_data_decaytime  = {}
 plot_data_amplitude  = {}
-plot_data_freq_sigma = {}
+plot_data_hfpower    = {}
 plot_data_pulses     = {}
 
 target_pulse_t = None
@@ -263,8 +325,9 @@ if ANALYSIS_MODE == "LOAD_CURVE":
     for filepath in FILES:
         channel = os.path.basename(filepath).split("_")[-1].replace(".root", "")
         vbias_rt  = []; rt_arr  = []
+        vbias_dec = []; dec_arr = []
         vbias_amp = []; amp_arr = []
-        vbias_sig = []; sig_arr = []
+        vbias_hf  = []; hf_arr  = []
 
         with uproot.open(filepath) as f:
             wp_indices = sorted(set(
@@ -276,19 +339,22 @@ if ANALYSIS_MODE == "LOAD_CURVE":
             for wp in wp_indices:
                 vb = wp_to_vbias(wp)
 
-                # Waveform (Risetime & Freq Sigma)
+                # Waveform (Risetime, Decaytime & HF-power)
                 try:
                     hist  = f[f"averagepulse_ap_wp{wp}_medianAP"]
                     pulse = np.asarray(hist.values(), dtype=float)
                     t_s   = np.asarray(hist.axis().centers(), dtype=float)
 
                     rt_ms  = risetime_cubic(pulse, t_s)
-                    sig_hz = power_spectrum_sigma(pulse, t_s)
+                    dec_ms = decaytime_cubic(pulse, t_s)
+                    hf_val = hf_power(pulse, t_s)
 
                     if not np.isnan(rt_ms):
                         vbias_rt.append(vb); rt_arr.append(rt_ms)
-                    if not np.isnan(sig_hz):
-                        vbias_sig.append(vb); sig_arr.append(sig_hz)
+                    if not np.isnan(dec_ms):
+                        vbias_dec.append(vb); dec_arr.append(dec_ms)
+                    if not np.isnan(hf_val):
+                        vbias_hf.append(vb); hf_arr.append(hf_val)
 
                     if channel == TARGET_CH and abs(vb - TARGET_VBIAS) < 0.1:
                         target_pulse_t = t_s; target_pulse_v = pulse
@@ -306,9 +372,10 @@ if ANALYSIS_MODE == "LOAD_CURVE":
                 except (uproot.exceptions.KeyInFileError, Exception): pass
 
         plot_data_risetime[channel]   = {"x": vbias_rt,  "y": rt_arr}
+        plot_data_decaytime[channel]  = {"x": vbias_dec, "y": dec_arr}
         plot_data_amplitude[channel]  = {"x": vbias_amp, "y": amp_arr}
-        plot_data_freq_sigma[channel] = {"x": vbias_sig, "y": sig_arr}
-        print(f"✓ Channel {channel} | {len(rt_arr)} pts (RT), {len(amp_arr)} pts (Amp), {len(sig_arr)} pts (Sigma)")
+        plot_data_hfpower[channel]    = {"x": vbias_hf,  "y": hf_arr}
+        print(f"✓ Channel {channel} | {len(rt_arr)} RT, {len(dec_arr)} DT, {len(amp_arr)} Amp, {len(hf_arr)} HF")
 
 elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN":
     bin_dir  = os.path.join(BASE, BIN_DIR)
@@ -330,15 +397,18 @@ elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN":
         t_s = np.arange(len(meanpulse)) * SAMPLING_PERIOD_S
 
         rt_ms  = risetime_cubic(meanpulse, t_s)
-        sig_hz = power_spectrum_sigma(meanpulse, t_s)
+        dec_ms = decaytime_cubic(meanpulse, t_s)
+        hf_val = hf_power(meanpulse, t_s)
 
         plot_data_pulses[ch_int] = (t_s, meanpulse)
-        if not np.isnan(rt_ms):  plot_data_risetime[ch_int] = rt_ms
-        if not np.isnan(sig_hz): plot_data_freq_sigma[ch_int] = sig_hz
+        if not np.isnan(rt_ms):  plot_data_risetime[ch_int]  = rt_ms
+        if not np.isnan(dec_ms): plot_data_decaytime[ch_int] = dec_ms
+        if not np.isnan(hf_val): plot_data_hfpower[ch_int]   = hf_val
 
         rt_str  = f"{rt_ms:.4f} ms" if not np.isnan(rt_ms) else "N/A"
-        sig_str = f"{sig_hz:.2f} Hz" if not np.isnan(sig_hz) else "N/A"
-        print(f"✓ Channel {channel:<3} | RT: {rt_str:>10} | Freq \u03c3: {sig_str:>10}")
+        dec_str = f"{dec_ms:.4f} ms" if not np.isnan(dec_ms) else "N/A"
+        hf_str  = f"{hf_val:.3e}" if not np.isnan(hf_val) else "N/A"
+        print(f"✓ Channel {channel:<3} | RT: {rt_str:>10} | DT: {dec_str:>10} | HF: {hf_str:>12}")
 
 elif ANALYSIS_MODE == "AVERAGE_PULSES_ROOT":
     root_dir  = os.path.join(BASE, AP_ROOT_DIR)
@@ -365,19 +435,24 @@ elif ANALYSIS_MODE == "AVERAGE_PULSES_ROOT":
             continue
 
         rt_ms  = risetime_cubic(meanpulse, t_s)
-        sig_hz = power_spectrum_sigma(meanpulse, t_s)
+        dec_ms = decaytime_cubic(meanpulse, t_s)
+        hf_val = hf_power(meanpulse, t_s)
 
         plot_data_pulses[ch_int] = (t_s, meanpulse)
-        if not np.isnan(rt_ms):  plot_data_risetime[ch_int] = rt_ms
-        if not np.isnan(sig_hz): plot_data_freq_sigma[ch_int] = sig_hz
+        if not np.isnan(rt_ms):  plot_data_risetime[ch_int]  = rt_ms
+        if not np.isnan(dec_ms): plot_data_decaytime[ch_int] = dec_ms
+        if not np.isnan(hf_val): plot_data_hfpower[ch_int]   = hf_val
 
         rt_str  = f"{rt_ms:.4f} ms" if not np.isnan(rt_ms) else "N/A"
-        sig_str = f"{sig_hz:.2f} Hz" if not np.isnan(sig_hz) else "N/A"
-        print(f"[ok] Channel {channel:<3} | RT: {rt_str:>10} | Freq sigma: {sig_str:>10}")
+        dec_str = f"{dec_ms:.4f} ms" if not np.isnan(dec_ms) else "N/A"
+        hf_str  = f"{hf_val:.3e}" if not np.isnan(hf_val) else "N/A"
+        print(f"[ok] Channel {channel:<3} | RT: {rt_str:>10} | DT: {dec_str:>10} | HF: {hf_str:>12}")
 
 print("-" * 65)
 if ANALYSIS_MODE == "LOAD_CURVE":
-    export_amplitudes_csv(os.path.join(BASE + "/" + LOAD_CURVE_DIR, AMP_CSV_NAME))
+    results_dir = os.path.join(BASE, LOAD_CURVE_RESULTS_DIR)
+    os.makedirs(results_dir, exist_ok=True)
+    export_amplitudes_csv(os.path.join(results_dir, AMP_CSV_NAME))
 elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN":
     export_risetime_csv(os.path.join(BASE + "/" + BIN_DIR, RT_CSV_NAME))
 elif ANALYSIS_MODE == "AVERAGE_PULSES_ROOT":
@@ -451,11 +526,12 @@ def _make_channel_graph(canvas_name, canvas_title, data_dict, y_title):
 
 if ANALYSIS_MODE == "LOAD_CURVE" and SHOW_PLOTS:
     c_rt, mg_rt, leg_rt, gr_rt = _make_multigraph_canvas("c_risetime", "Risetime vs Bias Voltage", plot_data_risetime, "Risetime 10%#rightarrow90% (ms)")
+    c_dec, mg_dec, leg_dec, gr_dec = _make_multigraph_canvas("c_decaytime", "Decaytime vs Bias Voltage", plot_data_decaytime, "Decaytime 90%#rightarrow10% (ms)")
     c_amp, mg_amp, leg_amp, gr_amp = _make_multigraph_canvas("c_amplitude", "Median Amplitude vs Bias Voltage", plot_data_amplitude, "Median Amplitude (V)", x_min=0)
-    c_sig, mg_sig, leg_sig, gr_sig = _make_multigraph_canvas("c_freq_sigma", "Spectral #sigma vs Bias Voltage", plot_data_freq_sigma, "Spectral Spread #sigma_{f} (Hz)", x_min=0)
-    
-    canvases.extend([c_rt, c_amp, c_sig]); graphs.extend(gr_rt + gr_amp + gr_sig)
-    keepalive.extend([mg_rt, leg_rt, mg_amp, leg_amp, mg_sig, leg_sig])
+    c_hf, mg_hf, leg_hf, gr_hf = _make_multigraph_canvas("c_hfpower", "AP HF-power vs Bias Voltage", plot_data_hfpower, "HF-power ( >500 Hz )", x_min=0)
+
+    canvases.extend([c_rt, c_dec, c_amp, c_hf]); graphs.extend(gr_rt + gr_dec + gr_amp + gr_hf)
+    keepalive.extend([mg_rt, leg_rt, mg_dec, leg_dec, mg_amp, leg_amp, mg_hf, leg_hf])
 
     if target_pulse_t is not None:
         c_p = ROOT.TCanvas("c_pulse", f"Pulse Ch {TARGET_CH} @ {TARGET_VBIAS}V", 800, 600)
@@ -468,8 +544,9 @@ if ANALYSIS_MODE == "LOAD_CURVE" and SHOW_PLOTS:
 
 elif ANALYSIS_MODE in ("AVERAGE_PULSES_BIN", "AVERAGE_PULSES_ROOT") and SHOW_PLOTS:
     c_rt, gr_rt   = _make_channel_graph("c_rt_single", "Risetime vs Channel", plot_data_risetime, "Risetime (ms)")
-    c_sig, gr_sig = _make_channel_graph("c_sig_single", "Spectral #sigma vs Channel", plot_data_freq_sigma, "Spectral Spread (Hz)")
-    canvases.extend([c_rt, c_sig]); graphs.extend([gr_rt, gr_sig])
+    c_dec, gr_dec = _make_channel_graph("c_dec_single", "Decaytime vs Channel", plot_data_decaytime, "Decaytime (ms)")
+    c_hf, gr_hf   = _make_channel_graph("c_hf_single", "AP HF-power vs Channel", plot_data_hfpower, "HF-power ( >500 Hz )")
+    canvases.extend([c_rt, c_dec, c_hf]); graphs.extend([gr_rt, gr_dec, gr_hf])
 
     if plot_data_pulses:
         _src = ".bin" if ANALYSIS_MODE == "AVERAGE_PULSES_BIN" else "ROOT"
