@@ -45,28 +45,26 @@ Uso:
 """
 
 import os
+import re
 import csv
+import glob
 import math
 import argparse
 
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
-<<<<<<< HEAD
 DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_octopus", "BI_results_m205.csv")
-DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "amplitudes_m205.csv")
+DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "timing_SNR_m205.csv")
 # Modalità Wiener (--wiener): risultati di analyse_BI_m205_wiener.py. Le ampiezze
 # sono le stesse (proprietà del template), quindi cambia solo il CSV dei BI.
 DEFAULT_BI_CSV_WIENER = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205_wiener.csv")
-=======
-DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205.csv")
-DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "m205_results_wiener", "amplitudes_m205.csv")
-DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_wiener", "timing_SNR_m205.csv")
->>>>>>> d6ab10d910466cca972e08fd8aff2d8e309ee362
 MEAS_NAME       = "000205"
+SAMPLING_RATE   = 10_000.0   # m205: 10 kHz (per l'asse delle frequenze dei filtri)
 
 # Canali esclusi di default (in aggiunta a quelli passati con --exclude)
 EXCLUDE_CHANNELS = [37, 40, 41, 94]
@@ -300,6 +298,60 @@ def plot_grid_vbias(rows, specs, ncols, out_png, colors, suptitle):
     print(f"  → {os.path.basename(out_png)}  (tonalità per canale, sfumatura per V_bias)")
 
 
+def plot_trained_filters(rows, filters_dir, p):
+    """Una immagine per canale coi filtri di banda ADDESTRATI f1, f2 (dai .npy di
+    analyse_BI_m205_wiener.py). Ogni immagine e' una griglia: un pannello per WP,
+    con f1 e f2 sovrapposti. I .npy contengono la meta' indipendente dello spettro
+    (DC..Nyquist), quindi si plottano direttamente SOLO le frequenze positive.
+
+    Se la cartella dei filtri non esiste (es. run col filtro ottimo) non fa nulla."""
+    if not os.path.isdir(filters_dir):
+        print(f"[INFO] cartella filtri non trovata ({filters_dir}): salto il plot di f1/f2.")
+        return
+    # (canale, wp) -> V_bias, per titolare i pannelli.
+    vb_of = {(r["channel"], int(r["wp"])): r["vbias"]
+             for r in rows if r.get("wp") is not None}
+    wp_re = re.compile(r"_wp(\d+)\.npy$")
+    n_imgs = 0
+    for ch in sorted(set(r["channel"] for r in rows)):
+        f1_files = glob.glob(os.path.join(filters_dir, f"f1_ch{ch}_wp*.npy"))
+        wps = sorted(int(wp_re.search(os.path.basename(x)).group(1)) for x in f1_files)
+        if not wps:
+            continue
+        ncols = min(5, len(wps))
+        nrows = math.ceil(len(wps) / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.5 * nrows),
+                                 squeeze=False)
+        axf = axes.ravel()
+        for ax, wp in zip(axf, wps):
+            f1 = np.load(os.path.join(filters_dir, f"f1_ch{ch}_wp{wp}.npy"))
+            f2_path = os.path.join(filters_dir, f"f2_ch{ch}_wp{wp}.npy")
+            f2 = np.load(f2_path) if os.path.exists(f2_path) else None
+            freq = np.linspace(0.0, SAMPLING_RATE / 2.0, len(f1))  # positive freqs: DC..Nyquist
+            ax.plot(freq, f1, lw=1.0, color="#1f77b4", label=r"$f_1$")
+            if f2 is not None:
+                ax.plot(freq, f2[:len(freq)], lw=1.0, color="#d62728", label=r"$f_2$")
+            vb = vb_of.get((ch, wp))
+            ax.set_title(f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else ""), fontsize=9)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=7)
+        for ax in axf[len(wps):]:
+            ax.axis("off")
+        axf[0].legend(fontsize=9, loc="upper right")
+        fig.suptitle(f"Trained band filters $f_1$, $f_2$ — Ch {ch}  ·  Measurement {MEAS_NAME}",
+                     fontsize=14, fontweight="bold")
+        fig.supxlabel("Frequency (Hz)", fontsize=11)
+        fig.supylabel("Filter amplitude", fontsize=11)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        out_png = p(f"trained_filters_ch{ch}_m205.png")
+        fig.savefig(out_png, dpi=180)
+        plt.close(fig)
+        n_imgs += 1
+        print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
+    if n_imgs == 0:
+        print(f"[INFO] nessun .npy di filtri in {filters_dir}: nessuna immagine f1/f2 prodotta.")
+
+
 def plot_bi_3d_html(rows, out_html, colors):
     """Scatter 3D interattivo (plotly) in HTML: BI vs SNR vs risetime, per canale.
     L'asse z mostra log10(BI); il valore reale di BI è nel tooltip."""
@@ -430,6 +482,9 @@ def main():
     parser.add_argument("--timing-csv", default=DEFAULT_TIMING_CSV,
                         help="CSV timing (fallback per rho_t=SNR*beta se non gia' nel BI CSV)")
     parser.add_argument("--outdir", default=None, help="cartella di output (default: accanto al BI CSV)")
+    parser.add_argument("--filters-dir", default=None,
+                        help="cartella coi .npy dei filtri f1/f2 addestrati "
+                             "(default: <dir del BI CSV>/trained_filters)")
     parser.add_argument("--exclude", nargs="*", type=int, default=None,
                         help="canali da escludere, es. --exclude 31 94")
     args = parser.parse_args()
@@ -471,6 +526,8 @@ def main():
 
     outdir = args.outdir or os.path.dirname(os.path.abspath(args.bi_csv))
     os.makedirs(outdir, exist_ok=True)
+    filters_dir = args.filters_dir or os.path.join(
+        os.path.dirname(os.path.abspath(args.bi_csv)), "trained_filters")
 
     colors = channel_colors([r["channel"] for r in rows])
 
@@ -549,6 +606,9 @@ def main():
 
     # ── Scatter 3D interattivo BI vs SNR vs risetime (HTML) ─────────────────────
     plot_bi_3d_html(rows, p("BI_vs_SNR_risetime_3D_m205.html"), colors)
+
+    # ── Filtri di banda addestrati f1, f2 (un'immagine per canale, se presenti) ─
+    plot_trained_filters(rows, filters_dir, p)
 
     # ── Riepilogo punto ottimo ─────────────────────────────────────────────────
     summarize_best(rows, p("BI_summary_m205.csv"), p("BI_min_per_channel_m205.png"), colors)
