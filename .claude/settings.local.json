@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/homebrew/bin/python3.13 -m py_compile src/analysis.py)"
+    ]
+  }
+}

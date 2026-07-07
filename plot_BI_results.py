@@ -355,6 +355,53 @@ def plot_trained_filters(rows, filters_dir, p):
         print(f"[INFO] nessun .npy di filtri in {filters_dir}: nessuna immagine f1/f2 prodotta.")
 
 
+def plot_trained_lambda(rows, filters_dir, p):
+    """Una immagine per canale con la curva lambda(f) ADDESTRATA (dai .npy di
+    analyse_BI_m205_wiener_freq.py, filtro di Wiener a lambda dipendente dalla
+    frequenza). Griglia: un pannello per WP, lambda(f) vs frequenza. I .npy sono la
+    meta' indipendente dello spettro (DC..Nyquist), quindi si plottano SOLO le
+    frequenze positive. Asse y log (lambda copre molte decadi); linea a lambda=1
+    (Wiener standard). Se non ci sono file lambda_*.npy non fa nulla."""
+    if not os.path.isdir(filters_dir):
+        return
+    vb_of = {(r["channel"], int(r["wp"])): r["vbias"]
+             for r in rows if r.get("wp") is not None}
+    wp_re = re.compile(r"_wp(\d+)\.npy$")
+    n_imgs = 0
+    for ch in sorted(set(r["channel"] for r in rows)):
+        lam_files = glob.glob(os.path.join(filters_dir, f"lambda_ch{ch}_wp*.npy"))
+        wps = sorted(int(wp_re.search(os.path.basename(x)).group(1)) for x in lam_files)
+        if not wps:
+            continue
+        ncols = min(5, len(wps))
+        nrows = math.ceil(len(wps) / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.5 * nrows),
+                                 squeeze=False)
+        axf = axes.ravel()
+        for ax, wp in zip(axf, wps):
+            lam = np.load(os.path.join(filters_dir, f"lambda_ch{ch}_wp{wp}.npy"))
+            freq = np.linspace(0.0, SAMPLING_RATE / 2.0, len(lam))  # positive freqs: DC..Nyquist
+            ax.plot(freq, lam, lw=1.0, color="#2ca02c")
+            ax.axhline(1.0, color="gray", ls=":", lw=0.8)   # lambda=1: Wiener standard
+            ax.set_yscale("log")
+            vb = vb_of.get((ch, wp))
+            ax.set_title(f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else ""), fontsize=9)
+            ax.grid(True, which="both", alpha=0.3)
+            ax.tick_params(labelsize=7)
+        for ax in axf[len(wps):]:
+            ax.axis("off")
+        fig.suptitle(rf"Trained Wiener $\lambda(f)$ — Ch {ch}  ·  Measurement {MEAS_NAME}",
+                     fontsize=14, fontweight="bold")
+        fig.supxlabel("Frequency (Hz)", fontsize=11)
+        fig.supylabel(r"$\lambda(f)$", fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        out_png = p(f"trained_lambda_ch{ch}_m205.png")
+        fig.savefig(out_png, dpi=180)
+        plt.close(fig)
+        n_imgs += 1
+        print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
+
+
 def plot_bi_3d_html(rows, out_html, colors):
     """Scatter 3D interattivo (plotly) in HTML: BI vs SNR vs risetime, per canale.
     L'asse z mostra log10(BI); il valore reale di BI è nel tooltip."""
@@ -612,6 +659,8 @@ def main():
 
     # ── Filtri di banda addestrati f1, f2 (un'immagine per canale, se presenti) ─
     plot_trained_filters(rows, filters_dir, p)
+    # ── lambda(f) addestrato (Wiener freq-dipendente): un'immagine per canale ────
+    plot_trained_lambda(rows, filters_dir, p)
 
     # ── Riepilogo punto ottimo ─────────────────────────────────────────────────
     summarize_best(rows, p("BI_summary_m205.csv"), p("BI_min_per_channel_m205.png"), colors)
