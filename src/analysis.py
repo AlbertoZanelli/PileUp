@@ -837,6 +837,133 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     return f1, f2, lam.item(), W_unit, J_values, lambda_values
 
 
+def optimize_filters_wiener_lambda_freq(S, w, t, r, nps, signal_amp, ratio_distribution, N_sigma=1.28,
+                                        n_trials=500, activation_fct=None, pulse_center_ratio=0.5,
+                                        f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
+                                        lambda_smooth=0.0, verbose=True, use_interp=False):
+    """
+    Wiener filter optimization with a FREQUENCY-DEPENDENT noise-modulation lambda(f).
+
+    Generalizes :func:`optimize_filters_wiener_lambda`: instead of a single scalar
+    lambda, the Wiener kernel carries one trainable lambda PER FREQUENCY,
+
+        W_lambda(f) = S*(f) / ( |S(f)|^2 + lambda(f) * NPS(f) ),
+
+    so the deconvolution-vs-noise-rejection balance is tuned independently at each
+    frequency (low-f -> more deconvolution/sharpening, high-f -> more noise
+    rejection, or vice versa, as the data prefer). lambda(f) is parametrized as
+    ``exp(log_lambda)`` on the independent half of the spectrum (bins 0..N/2) and
+    mirrored to a symmetric full-length vector, so the kernel stays Hermitian and the
+    filtered pulse real. lambda(f) is optimized jointly with the band filters f1, f2
+    by minimizing the J metric. A constant lambda(f) reproduces
+    :func:`optimize_filters_wiener_lambda`; lambda(f) == 1 the standard Wiener filter.
+
+    An optional smoothness regularization ``lambda_smooth`` penalizes the squared
+    difference of adjacent log-lambda bins, discouraging lambda(f) from overfitting
+    the single AP+NPS realization (set to 0 to disable).
+
+    Args:
+        S (torch.Tensor): FFT of the (windowed) mean pulse.
+        w (torch.Tensor): Angular frequency tensor.
+        t, r (torch.Tensor): Delay grid and pile-up energy-sharing ratio tensors.
+        nps (torch.Tensor or numpy.ndarray): Noise power spectrum.
+        signal_amp (float): Signal amplitude.
+        ratio_distribution (torch.Tensor): Ratio distribution tensor.
+        N_sigma (float, optional): Sigma threshold for the J metric. Defaults to 1.28.
+        n_trials (int, optional): Optimization steps. Defaults to 500.
+        f1_init, f2_init (torch.Tensor or None, optional): Initial band filters.
+        lambda_init (float, optional): Initial value for every lambda(f) bin. Defaults to 1.0.
+        lr_lambda (float or None, optional): Learning rate for log lambda(f). Defaults to 1e-1.
+        lambda_smooth (float, optional): Weight of the smoothness penalty on
+            log lambda(f). Defaults to 0.0 (off).
+        verbose (bool, optional): Print progress. Defaults to True.
+        use_interp (bool, optional): Interpolate the peak. Defaults to False.
+
+    Returns:
+        tuple:
+            - f1 (torch.Tensor): optimized first band filter (full length).
+            - f2 (torch.Tensor): optimized second band filter (full length).
+            - lambda_half (numpy.ndarray): optimized lambda(f) on the independent
+              half (bins 0..N/2, length N//2+1). Full: concat([h, h[-2:0:-1]]).
+            - W_unit (torch.Tensor): final Wiener kernel with the optimized lambda(f).
+            - J_values (list): J history.
+            - lambda_mean_values (list): mean of lambda(f) per step (convergence).
+    """
+    if not torch.is_tensor(nps):
+        nps = torch.as_tensor(nps, device=S.device)
+    nps = nps.to(device=S.device, dtype=torch.float32)
+
+    # Delay phases do not depend on W: precompute once.
+    exp_term = torch.exp(-1j * w[None, :] * t[:, None])  # (len(t), len(w))
+
+    n = len(S)
+    half = n // 2 + 1
+    activation_fct = torch.nn.Softplus(20, 20) if activation_fct is None else activation_fct
+    f1_init = activation_fct(torch.rand(half, dtype=torch.float)) if f1_init is None else f1_init.clone().abs()
+    f2_init = activation_fct(torch.rand(half, dtype=torch.float)) if f2_init is None else f2_init.clone().abs()
+    if len(f1_init) > half:
+        f1_init = f1_init[:half]
+    if len(f2_init) > half:
+        f2_init = f2_init[:half]
+    f1_param = torch.nn.Parameter(f1_init.to(S.device))
+    f2_param = torch.nn.Parameter(f2_init.to(S.device))
+    # One trainable log-lambda per independent-frequency bin (mirrored to full length).
+    log_lambda = torch.nn.Parameter(
+        torch.full((half,), float(np.log(lambda_init)), device=S.device))
+
+    lr_lambda = 1e-1 if lr_lambda is None else lr_lambda
+    optimizer = torch.optim.Adam([
+        {"params": [f1_param, f2_param], "lr": 1e-2},
+        {"params": [log_lambda], "lr": lr_lambda},
+    ])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials, eta_min=1e-2)
+    J_values = []
+    lambda_mean_values = []
+    J = torch.nan
+    for step in range(n_trials):
+        optimizer.zero_grad()
+        # lambda(f): positive half, mirrored to a symmetric full-length vector.
+        lam_half = torch.exp(log_lambda)
+        lam = torch.cat([lam_half, lam_half[1:-1].flip(0)])
+        # Rebuild the (lambda(f)-dependent) Wiener kernel and derived spectra.
+        W_unit = compute_W_torch(S, nps, lam)
+        S_H = S * W_unit
+        S_H_delayed = S_H[None, :] * exp_term
+        S2_over_nps = (S.abs() ** 2) / nps  # unused by the Wiener sigma, kept for signature
+        # Enforce positivity and rebuild the full (Hermitian) band filters.
+        f1 = activation_fct(f1_param)
+        f2 = activation_fct(f2_param)
+        f1 = torch.cat([f1, f1[1:-1].flip(0)])
+        f2 = torch.cat([f2, f2[1:-1].flip(0)])
+        norm1 = torch.mean(torch.abs(f1 * W_unit * S))
+        norm2 = torch.mean(torch.abs(f2 * W_unit * S))
+        f1 = f1 / norm1
+        f2 = f2 / norm2
+        J = compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, signal_amp,
+                             ratio_distribution, N_sigma=N_sigma,
+                             pulse_center_ratio=pulse_center_ratio, use_interp=use_interp)
+        loss = J
+        if lambda_smooth:
+            loss = loss + lambda_smooth * torch.mean((log_lambda[1:] - log_lambda[:-1]) ** 2)
+        J_values.append(J.item())
+        lambda_mean_values.append(lam_half.mean().item())
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        if step % 10 == 0 and verbose:
+            lm = lam_half.detach()
+            print(f"Step {step}: J = {J.item():.6f}  lambda(f) "
+                  f"[min {lm.min():.3g}, med {lm.median():.3g}, max {lm.max():.3g}]")
+    lam_half = torch.exp(log_lambda).detach()
+    lam = torch.cat([lam_half, lam_half[1:-1].flip(0)])
+    print(f"Final: J = {J.item():.6f}  lambda(f) "
+          f"[min {lam_half.min():.3g}, med {lam_half.median():.3g}, max {lam_half.max():.3g}]")
+    f1 = f1.detach()
+    f2 = f2.detach()
+    W_unit = compute_W_torch(S, nps, lam).detach()
+    return f1, f2, lam_half.cpu().numpy(), W_unit, J_values, lambda_mean_values
+
+
 def get_PSD(dataset, H_unit, f1, f2, batch_size=128, window_fct=np.ones):
     """
     Computes the Pulse Shape Discriminator (PSD) for the given dataset.

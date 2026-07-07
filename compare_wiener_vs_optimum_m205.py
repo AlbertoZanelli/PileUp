@@ -18,6 +18,9 @@ Output (nella cartella --outdir, default m205_results_wiener):
   - BI_improvement_vs_Vbias_m205.png : miglioramento % vs V_bias, una curva per canale
   - BI_improvement_per_channel_m205.png : miglioramento medio per canale (bar chart)
                                           con la media globale come linea di riferimento
+  - BI_vs_Vbias_OF_vs_WF_m205.png : griglia (un pannello per canale) con le due curve
+                                    BI vs V_bias, filtro ottimo vs filtro di Wiener
+  - BI_vs_SNRbeta_OF_vs_WF_m205.png : idem ma BI vs SNR*beta (asse x = rho_t condiviso)
   - BI_improvement_m205.csv : tabella punto-per-punto (canale, V_bias, BI_opt,
                               BI_wiener, improvement_%) + riepilogo per canale
 A video: tabella dei miglioramenti medi per canale e miglioramento medio globale.
@@ -31,6 +34,7 @@ Uso:
 
 import os
 import csv
+import math
 import argparse
 
 import matplotlib
@@ -57,8 +61,9 @@ def _to_float(x):
 
 
 def read_bi_map(path: str) -> dict:
-    """Legge un CSV dei risultati BI -> mappa (canale, V_bias arrotondato) -> BI.
-    Tiene solo le righe con channel/vbias/BI validi e BI > 0."""
+    """Legge un CSV dei risultati BI -> mappa (canale, V_bias arrotondato) ->
+    {"BI":..., "rho_t":...}. rho_t (=SNR*beta) e' opzionale: presente nel CSV Wiener,
+    puo' mancare nel CSV del filtro ottimo. Tiene solo righe con BI valido e > 0."""
     bmap = {}
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
@@ -67,7 +72,7 @@ def read_bi_map(path: str) -> dict:
             bi = _to_float(row.get("BI"))
             if ch is None or vb is None or bi is None or bi <= 0:
                 continue
-            bmap[(int(ch), round(vb, 3))] = bi
+            bmap[(int(ch), round(vb, 3))] = {"BI": bi, "rho_t": _to_float(row.get("rho_t"))}
     return bmap
 
 
@@ -89,13 +94,20 @@ def build_comparison(opt_map: dict, wie_map: dict, exclude: set) -> list:
         ch, vb = key
         if ch in exclude:
             continue
-        bi_opt = opt_map[key]
-        bi_wie = wie_map[key]
+        bi_opt = opt_map[key]["BI"]
+        bi_wie = wie_map[key]["BI"]
+        # rho_t = SNR*beta e' una proprieta' del template (dallo stesso S del filtro
+        # ottimo), quindi identica per i due filtri: uso quella del Wiener e, se
+        # assente, ricado su quella del filtro ottimo. Serve da asse x condiviso.
+        rho_t = wie_map[key]["rho_t"]
+        if rho_t is None:
+            rho_t = opt_map[key]["rho_t"]
         rows.append({
             "channel": ch,
             "vbias": vb,
             "BI_optimum": bi_opt,
             "BI_wiener": bi_wie,
+            "rho_t": rho_t,
             "improvement_pct": 100.0 * (bi_opt - bi_wie) / bi_opt,
         })
     rows.sort(key=lambda r: (r["channel"], r["vbias"]))
@@ -149,6 +161,58 @@ def plot_improvement_per_channel(per_ch, global_mean, colors, out_png):
                  f"Measurement {MEAS_NAME}", fontsize=13)
     ax.grid(True, axis="y", which="both", linestyle="--", alpha=0.6)
     fig.tight_layout()
+    fig.savefig(out_png, dpi=200)
+    plt.close(fig)
+    print(f"  → {os.path.basename(out_png)}")
+
+
+# Colori fissi per i due filtri (indipendenti dal canale, dato che ogni pannello
+# e' un canale): navy = filtro ottimo, ambra = filtro di Wiener.
+OF_COLOR = "#1f4e79"
+WF_COLOR = "#e8871e"
+
+
+def plot_bi_compare_grid(rows, out_png, xkey, xlabel, title, logx=False):
+    """Griglia con un pannello per canale: BI vs xkey con DUE curve sovrapposte,
+    filtro OTTIMO (navy, tratteggiata) e filtro di WIENER (ambra, piena). L'asse x
+    e' condiviso (stessa V_bias / stesso SNR*beta); i punti sono connessi lungo lo
+    sweep in V_bias. y in scala log (il BI copre piu' decadi)."""
+    from matplotlib.lines import Line2D
+    channels = sorted(set(r["channel"] for r in rows))
+    if not any(r.get(xkey) is not None for r in rows):
+        print(f"[WARN] nessun dato '{xkey}' disponibile: salto {os.path.basename(out_png)}.")
+        return
+    n = len(channels)
+    ncols = min(3, n)
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.8 * ncols, 3.7 * nrows), squeeze=False)
+    axf = axes.ravel()
+    for ax, ch in zip(axf, channels):
+        d = sorted([r for r in rows if r["channel"] == ch and r.get(xkey) is not None],
+                   key=lambda r: r["vbias"])
+        if not d:
+            ax.axis("off")
+            continue
+        xs = [r[xkey] for r in d]
+        ax.plot(xs, [r["BI_optimum"] for r in d], "o--", ms=5, lw=1.2,
+                color=OF_COLOR, label="Optimum filter")
+        ax.plot(xs, [r["BI_wiener"] for r in d], "o-", ms=5, lw=1.5,
+                color=WF_COLOR, label="Wiener filter")
+        ax.set_yscale("log")
+        if logx:
+            ax.set_xscale("log")
+        ax.set_title(f"Ch {ch}", fontsize=12, fontweight="bold")
+        ax.grid(True, which="both", linestyle="--", alpha=0.5)
+    for ax in axf[n:]:
+        ax.axis("off")
+    handles = [Line2D([0], [0], marker="o", ls="--", color=OF_COLOR, label="Optimum filter"),
+               Line2D([0], [0], marker="o", ls="-", color=WF_COLOR, label="Wiener filter")]
+    fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.055),
+               ncol=2, fontsize=12, frameon=False)
+    fig.suptitle(f"{title} — Measurement {MEAS_NAME}", fontsize=15, fontweight="bold")
+    fig.supxlabel(xlabel, fontsize=12, y=0.01)
+    fig.supylabel("Background Index (BI)", fontsize=12)
+    fig.tight_layout(rect=[0, 0.10, 1, 0.96])
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
     print(f"  → {os.path.basename(out_png)}")
@@ -242,6 +306,11 @@ def main():
     print()
     plot_improvement_vs_vbias(rows, colors, p("BI_improvement_vs_Vbias_m205.png"))
     plot_improvement_per_channel(per_ch, global_mean, colors, p("BI_improvement_per_channel_m205.png"))
+    # Confronto diretto delle due curve BI (ottimo vs Wiener), un pannello per canale.
+    plot_bi_compare_grid(rows, p("BI_vs_Vbias_OF_vs_WF_m205.png"), "vbias",
+                         r"$V_{bias}$ (V)", "BI vs Bias Voltage — Optimum vs Wiener", logx=False)
+    plot_bi_compare_grid(rows, p("BI_vs_SNRbeta_OF_vs_WF_m205.png"), "rho_t",
+                         r"SNR·$\beta$ (Hz)", r"BI vs SNR·$\beta$ — Optimum vs Wiener", logx=True)
     write_csv(rows, per_ch, global_mean, p("BI_improvement_m205.csv"))
 
     print("\nFatto.")
