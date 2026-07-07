@@ -1,0 +1,5 @@
+Currently Loaded Modulefiles:
+ 1) cmake/3.31.4   3) fftw/3.3.10    5) gsl/2.8        
+ 2) gcc/15.2.0     4) root/6.32.04   6) python/3.12.3  
+/mnt/disk1/data/users/azanelli/PileUp/src/analysis.py:777: UserWarning: Casting complex values to real discards the imaginary part (Triggered internally at /pytorch/aten/src/ATen/native/Copy.cpp:308.)
+  nps = nps.to(device=S.device, dtype=torch.float32)

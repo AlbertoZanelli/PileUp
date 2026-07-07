@@ -331,6 +331,9 @@ def plot_trained_filters(rows, filters_dir, p):
             ax.plot(freq, f1, lw=1.0, color="#1f77b4", label=r"$f_1$")
             if f2 is not None:
                 ax.plot(freq, f2[:len(freq)], lw=1.0, color="#d62728", label=r"$f_2$")
+            # usare scala logaritmica sull'asse y per evidenziare le differenze di ampiezza
+            ax.set_yscale("log")
+            ax.set_xscale("log")
             vb = vb_of.get((ch, wp))
             ax.set_title(f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else ""), fontsize=9)
             ax.grid(True, alpha=0.3)
