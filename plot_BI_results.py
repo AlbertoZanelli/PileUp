@@ -1,47 +1,41 @@
 """
 plot_BI_results.py
 ==================
-Analisi e plot dei risultati di stima del BI (Background Index) prodotti dai job
-di analyse_BI_m205.py.
+Analisi e plot dei risultati di stima del BI (Background Index) della misura m205.
 
-Funziona sia con i risultati del filtro OTTIMO (analyse_BI_m205.py) sia con quelli
-del filtro di WIENER a lambda addestrabile (analyse_BI_m205_wiener.py): basta
-passare il relativo CSV con --bi-csv. Se il CSV contiene lambda_wiener, viene
-prodotto anche il grafico lambda vs V_bias.
+Quale set di risultati analizzare si sceglie con l'UNICA variabile SUFFIX in testa
+al file (sezione CONFIGURAZIONE): da SUFFIX derivano la cartella dei risultati, il
+CSV dei BI, la cartella dei filtri e il suffisso di tutti i file di output.
+  SUFFIX = ""             -> filtro ottimo          (m205_results_octopus)
+  SUFFIX = "_wiener"      -> Wiener lambda scalare   (m205_results_wiener)
+  SUFFIX = "_wiener_freq" -> Wiener lambda(f)        (m205_results_wiener_freq)
+
+Nessun argomento da linea di comando: si configura tutto dalle costanti in testa.
 
 Sorgenti dati:
-  - BI_results_m205.csv  (dai job): channel, wp, vbias, signal_amp, sigma_analytic,
-                                     SNR, BI, J_final; opzionali beta_Hz, rho_t
-                                     (=SNR*beta) e lambda_wiener (solo Wiener)
-  - amplitudes_m205.csv  (da risetime_and_amplitude_.py): channel, vbias_V,
-                                     risetime_ms, decaytime_ms, amplitude_mV, hf_power
-Risetime, decaytime e HF-power vengono uniti ai risultati BI per (canale, V_bias).
-rho_t viene letto inline dal BI CSV; --timing-csv resta come fallback per i CSV
-vecchi che non hanno quella colonna.
+  - BI_results_m205<SUFFIX>.csv : channel, wp, vbias, signal_amp, sigma_analytic,
+                                  SNR, BI, J_final; opzionali beta_Hz, rho_t
+                                  (=SNR*beta) e lambda_wiener (Wiener scalare)
+  - amplitudes_m205.csv (condiviso): channel, vbias_V, risetime_ms, decaytime_ms,
+                                     amplitude_mV, hf_power
+  - trained_filters/*.npy : filtri f1/f2 e lambda(f) addestrati (versioni Wiener)
 
-Plot prodotti (PNG nella cartella dei risultati) — accorpati in poche canvas:
-  - BI_vs_parameters_m205.png   (3x3): BI vs V_bias / SNR / risetime / decaytime /
-                                       HF-power / amplitude / sigma / SNR-over-risetime /
-                                       SNR-over-(decay/rise)
-  - params_vs_Vbias_m205.png    (2x2): signal_amp / sigma / SNR / HF-power vs V_bias
-  - BI_vs_SNR_risetime_3D_m205.html   scatter 3D interattivo BI vs SNR vs risetime
-  - BI_min_per_channel_m205.png       bar chart + BI_summary_m205.csv (tabella riepilogo)
-  - lambda_vs_Vbias_m205.png          lambda del Wiener vs V_bias (solo CSV Wiener)
+Plot prodotti (nella cartella dei risultati, col suffisso):
+  - BI_vs_parameters_m205.png            (3x3) BI vs V_bias/risetime/decaytime/SNR/
+                                         amplitude/sigma/SNR-over-risetime/SNR*beta/HF-power
+  - BI_vs_parameters_vbiascolor_m205.png (3x3) come sopra, hue=canale, shade=V_bias
+  - params_vs_Vbias_m205.png             (2x2) amplitude/sigma/SNR/HF-power vs V_bias
+  - BI_vs_Vbias_m205.png                 BI vs V_bias (figura dedicata)
+  - lambda_vs_Vbias_m205.png             lambda del Wiener vs V_bias (solo Wiener scalare)
+  I plot dei filtri finiscono nella sottocartella  filter_plots/  (uno per canale):
+  - trained_filters_ch*_m205.png         f1, f2 vs frequenza (se ci sono i .npy)
+  - trained_lambda_ch*_m205.png          lambda(f) vs frequenza (Wiener freq-dipendente)
+  - total_filters_ch*_m205.png           filtri totali g_i = f_i · W (W ricostruito
+                                         da ROOT + lambda); |g_i(f)|, freq positive
 
-Lo spectral spread (freq_sigma) e' stato sostituito da HF-power (potenza dello
-spettro dell'AP sopra ~500 Hz), la metrica di rumore adottata nello studio m204.
-
-E' possibile escludere canali (costante EXCLUDE_CHANNELS oppure --exclude).
-Il BI e' una quantita' da MINIMIZZARE: il riepilogo individua, per ciascun
-canale, il punto di lavoro (V_bias) a BI minimo.
-
-Uso:
-    python plot_BI_results.py
-    python plot_BI_results.py --exclude 31 94
-    python plot_BI_results.py --bi-csv path/BI.csv --amp-csv path/amp.csv --outdir path/
-    # modalità Wiener: percorsi in m205_results_wiener e output con suffisso _wiener
-    # (grafico lambda vs V_bias incluso):
-    python plot_BI_results.py --wiener
+Modalità BAD_CHANNELS: se True analizza i 4 canali scartati (37, 40, 41, 94) invece
+dei 5 buoni, e aggiunge "_bad" al nome delle immagini per non sovrascrivere quelle
+standard. Altrimenti analizza i 5 buoni (31, 34, 71, 83, 91).
 """
 
 import os
@@ -49,26 +43,47 @@ import re
 import csv
 import glob
 import math
-import argparse
 
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_octopus", "BI_results_m205.csv")
-DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
-DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "timing_SNR_m205.csv")
+# ═════════════════════════════════════════════════════════════════════════════
+# CONFIGURAZIONE  —  quale set di risultati analizzare
+# ═════════════════════════════════════════════════════════════════════════════
+# Basta cambiare SUFFIX: da qui derivano la cartella dei risultati, il CSV dei BI,
+# la cartella dei filtri e il suffisso di TUTTI i file di output.
+#   ""             -> filtro ottimo         (cartella m205_results_octopus)
+#   "_wiener"      -> Wiener lambda scalare  (cartella m205_results_wiener)
+#   "_wiener_freq" -> Wiener lambda(f)       (cartella m205_results_wiener_freq)
+SUFFIX = "_wiener"
 
-# Modalità Wiener (--wiener): risultati di analyse_BI_m205_wiener.py. Le ampiezze
-# sono le stesse (proprietà del template), quindi cambia solo il CSV dei BI.
-DEFAULT_BI_CSV_WIENER = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205_wiener.csv")
-MEAS_NAME       = "000205"
-SAMPLING_RATE   = 10_000.0   # m205: 10 kHz (per l'asse delle frequenze dei filtri)
+# Modalità "bad channels": se True analizza i 4 canali normalmente scartati
+# (37, 40, 41, 94) invece dei 5 buoni, e alle immagini viene aggiunto "_bad" nel
+# nome per non sovrascrivere quelle standard.
+BAD_CHANNELS = False
 
-# Canali esclusi di default (in aggiunta a quelli passati con --exclude)
-EXCLUDE_CHANNELS = [37, 40, 41, 94]
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(BASE_DIR, "m205_results" + (SUFFIX or "_octopus"))
+BI_CSV      = os.path.join(RESULTS_DIR, "BI_results_m205" + SUFFIX + ".csv")
+FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")     # .npy di f1/f2/lambda(f)
+TIMING_CSV  = os.path.join(RESULTS_DIR, "timing_SNR_m205.csv")  # fallback per rho_t
+AMP_CSV     = os.path.join(BASE_DIR, "amplitudes_m205.csv")     # condiviso tra i set
+OUTDIR      = RESULTS_DIR                                       # output accanto ai dati
+
+MEAS_NAME     = "000205"
+SAMPLING_RATE = 10_000.0   # m205: 10 kHz (asse frequenze dei filtri)
+WINDOW_SIZE   = 10_000     # campioni per finestra (per ricostruire il kernel Wiener)
+PROCESSED_DIR = os.path.join(BASE_DIR, "Processed")   # file ROOT con AP e NPS
+
+# Canali da escludere e tag nel nome dei file, secondo la modalità BAD_CHANNELS.
+if BAD_CHANNELS:
+    EXCLUDE_CHANNELS = [31, 34, 71, 83, 91]   # tieni i "cattivi": 37, 40, 41, 94
+    NAME_TAG = "_bad"
+else:
+    EXCLUDE_CHANNELS = [37, 40, 41, 94]        # tieni i "buoni": 31, 34, 71, 83, 91
+    NAME_TAG = ""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -403,193 +418,186 @@ def plot_trained_lambda(rows, filters_dir, p):
         print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
 
 
-def plot_bi_3d_html(rows, out_html, colors):
-    """Scatter 3D interattivo (plotly) in HTML: BI vs SNR vs risetime, per canale.
-    L'asse z mostra log10(BI); il valore reale di BI è nel tooltip."""
+# ═════════════════════════════════════════════════════════════════════════════
+# Filtri TOTALI  g_i(f) = f_i(f) · W(f)   (banda × kernel di Wiener)
+# ═════════════════════════════════════════════════════════════════════════════
+# Il filtro effettivamente applicato ai dati per ogni statistica non e' il solo
+# filtro di banda f_i, ma il suo PRODOTTO col kernel di Wiener W:
+#
+#     g_i(f) = f_i(f) · W(f) ,     W(f) = S*(f) / ( |S(f)|^2 + lambda·NPS(f) )
+#
+# f_i (reale) e' salvato nei .npy; W (complesso) NON e' salvato, quindi lo si
+# RICOSTRUISCE qui dai file ROOT (stessa AP/NPS e stessa normalizzazione del worker
+# analyse_BI_m205_wiener.py) e dal lambda addestrato (scalare dal CSV, oppure
+# lambda(f) dal .npy per la variante freq-dipendente). Poi g_i = f_i · W e nel plot
+# si mostra |g_i(f)| sulle frequenze positive.
+def _load_ap_nps(uproot_file, wp):
+    """AP (meanpulse) e NPS two-sided da un file ROOT aperto, per un WP. La NPS usa
+    la STESSA normalizzazione del worker (× 5.708 × window^2 × 1/sampling_time)."""
     try:
-        import plotly.graph_objects as go
-    except ImportError:
-        print("[WARN] plotly non disponibile: scatter 3D HTML saltato (pip install plotly).")
+        mp = np.asarray(uproot_file[f"averagepulse_ap_wp{wp}_medianAP"].values(), dtype=float)
+        nps = np.asarray(uproot_file[f"averagepowerspectrum_noise_wp{wp}_medianpower"].values(), dtype=float)
+    except Exception:
+        return None, None
+    nps = np.concatenate([nps, nps[-2:0:-1]])                  # one-sided -> two-sided
+    nps = nps * 5.708 * (WINDOW_SIZE ** 2) * (SAMPLING_RATE / WINDOW_SIZE)  # = ×(1/sampling_time)
+    return mp, nps
+
+
+def _wiener_kernel_half(meanpulse, nps, lam):
+    """Kernel di Wiener W(f) sulla meta' indipendente (DC..Nyquist), ricostruito con
+    la stessa formula di compute_W_torch (CUORE norm_type=0):
+
+        AvgPS = |S|^2,  a = sum|S|,  b = sum sqrt(NPS)
+        W = conj(S) / ( AvgPS/a + lam · NPS·a/b^2 ),   W[0] = 0
+
+    S = FFT del pulse finestrato (Hanning), come compute_H. lam puo' essere uno
+    scalare (Wiener a lambda unico) o un array sulla meta' indipendente (lambda(f))."""
+    S = np.fft.fft(meanpulse * np.hanning(len(meanpulse)))
+    AvgPS = np.abs(S) ** 2
+    a = np.sum(np.sqrt(AvgPS))
+    b = np.sum(np.sqrt(nps))
+    AvgPS_n = AvgPS / a
+    nps_n = nps * (a / b ** 2)
+    lam = np.asarray(lam, dtype=float)
+    if lam.ndim > 0:                                           # lambda(f): meta' -> spettro pieno
+        lam = np.concatenate([lam, lam[-2:0:-1]])
+    W = np.conj(S) / (AvgPS_n + lam * nps_n)
+    W[0] = 0.0
+    return W[: len(meanpulse) // 2 + 1]
+
+
+def plot_total_filters(rows, filters_dir, p):
+    """Una immagine per canale coi FILTRI TOTALI g_i = f_i · kernel (banda × kernel).
+    Il kernel viene letto dal .npy `kernel_ch*_wp*` se presente (lo salvano i worker:
+    W per il Wiener, H_unit per il filtro ottimo); altrimenti, per i run Wiener
+    vecchi, viene RICOSTRUITO dai file ROOT (AP+NPS) + lambda. Griglia: un pannello
+    per WP, |g_1| e |g_2| sovrapposti, solo frequenze positive (scala log)."""
+    if not os.path.isdir(filters_dir):
         return
-    from matplotlib.colors import to_hex
-
-    pts = [r for r in rows
-           if r.get("SNR") is not None and r.get("risetime_ms") is not None
-           and r.get("BI") is not None and r["BI"] > 0]
-    if not pts:
-        print("[WARN] nessun punto con SNR+risetime+BI per lo scatter 3D, salto.")
-        return
-
-    fig = go.Figure()
-    channels = sorted(set(r["channel"] for r in pts))
-    for ch in channels:
-        sub = [r for r in pts if r["channel"] == ch]
-        fig.add_trace(go.Scatter3d(
-            x=[r["SNR"] for r in sub],
-            y=[r["risetime_ms"] for r in sub],
-            z=[math.log10(r["BI"]) for r in sub],
-            mode="markers",
-            name=f"Ch {ch}",
-            marker=dict(size=5, color=to_hex(colors[ch])),
-            customdata=[[r["BI"], r["vbias"]] for r in sub],
-            hovertemplate=(f"Ch {ch}"
-                           "<br>SNR = %{x:.3f}"
-                           "<br>risetime = %{y:.4f} ms"
-                           "<br>BI = %{customdata[0]:.3e}"
-                           "<br>V_bias = %{customdata[1]:.3f} V"
-                           "<extra></extra>"),
-        ))
-
-    fig.update_layout(
-        title=f"BI vs SNR vs Risetime — Measurement {MEAS_NAME}",
-        scene=dict(
-            xaxis_title="SNR",
-            yaxis_title="Risetime (ms)",
-            zaxis_title="log10(BI)",
-        ),
-        legend_title="Canale",
-        template="plotly_white",
-        height=750,
-    )
-    fig.write_html(out_html, include_plotlyjs="cdn")
-    print(f"  → {os.path.basename(out_html)}  ({len(pts)} punti)")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Riepilogo: punto di lavoro ottimo (BI minimo) per canale
-# ═════════════════════════════════════════════════════════════════════════════
-def summarize_best(rows, out_csv, out_png, colors):
-    """Per ogni canale trova il BI minimo e il relativo punto di lavoro."""
-    best = {}
-    for r in rows:
-        ch = r["channel"]
-        if ch not in best or r["BI"] < best[ch]["BI"]:
-            best[ch] = r
-
-    if not best:
-        print("[WARN] nessun risultato per il riepilogo.")
-        return
-
-    chs = sorted(best.keys())
-
-    # ── CSV riepilogo ─────────────────────────────────────────────────────────
-    fields = ["channel", "best_vbias_V", "min_BI", "SNR_at_best",
-              "risetime_ms_at_best", "decaytime_ms_at_best", "amplitude_mV_at_best", "hf_power_at_best"]
-    with open(out_csv, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        for ch in chs:
-            b = best[ch]
-            w.writerow({
-                "channel": ch,
-                "best_vbias_V": f"{b['vbias']:.3f}",
-                "min_BI": f"{b['BI']:.6e}",
-                "SNR_at_best": f"{b['SNR']:.4f}" if b.get("SNR") is not None else "",
-                "risetime_ms_at_best": f"{b['risetime_ms']:.6f}" if b.get("risetime_ms") is not None else "",
-                "decaytime_ms_at_best": f"{b['decaytime_ms']:.6f}" if b.get("decaytime_ms") is not None else "",
-                "amplitude_mV_at_best": f"{b['amplitude_mV']:.6f}" if b.get("amplitude_mV") is not None else "",
-                "hf_power_at_best": f"{b['hf_power']:.6e}" if b.get("hf_power") is not None else "",
-            })
-    print(f"  → {os.path.basename(out_csv)}")
-
-    # ── Tabella a video ───────────────────────────────────────────────────────
-    print("\n  Punto di lavoro ottimo (BI minimo) per canale:")
-    print(f"  {'Ch':>4} {'V_bias':>8} {'BI_min':>12} {'SNR':>8} {'risetime_ms':>12} {'decaytime_ms':>12}")
-    for ch in chs:
-        b = best[ch]
-        snr = f"{b['SNR']:.3f}" if b.get("SNR") is not None else "  -"
-        rt  = f"{b['risetime_ms']:.4f}" if b.get("risetime_ms") is not None else "   -"
-        dt  = f"{b['decaytime_ms']:.4f}" if b.get("decaytime_ms") is not None else "   -"
-        print(f"  {ch:>4} {b['vbias']:>8.3f} {b['BI']:>12.4e} {snr:>8} {rt:>12} {dt:>12}")
-
-    # ── Bar chart del BI minimo per canale ─────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars_x = [str(ch) for ch in chs]
-    bars_y = [best[ch]["BI"] for ch in chs]
-    ax.bar(bars_x, bars_y, color=[colors[ch] for ch in chs])
-    ax.set_yscale("log")
-    ax.set_xlabel("Channel", fontsize=12)
-    ax.set_ylabel("Minimum BI", fontsize=12)
-    ax.set_title(f"Minimum BI per channel\nMeasurement {MEAS_NAME}", fontsize=14)
-    ax.grid(True, axis="y", which="both", linestyle="--", alpha=0.6)
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=300)
-    plt.close(fig)
-    print(f"  → {os.path.basename(out_png)}")
+    lam_scalar = {(r["channel"], int(r["wp"])): r.get("lambda_wiener")
+                  for r in rows if r.get("wp") is not None}
+    vb_of = {(r["channel"], int(r["wp"])): r["vbias"] for r in rows if r.get("wp") is not None}
+    wp_re = re.compile(r"_wp(\d+)\.npy$")
+    n_imgs = 0
+    for ch in sorted(set(r["channel"] for r in rows)):
+        f1_files = glob.glob(os.path.join(filters_dir, f"f1_ch{ch}_wp*.npy"))
+        wps = sorted(int(wp_re.search(os.path.basename(x)).group(1)) for x in f1_files)
+        if not wps:
+            continue
+        # Il ROOT serve solo se manca qualche kernel .npy (fallback ricostruzione).
+        need_root = any(not os.path.exists(os.path.join(filters_dir, f"kernel_ch{ch}_wp{wp}.npy"))
+                        for wp in wps)
+        rf = None
+        if need_root:
+            try:
+                import uproot
+                roots = glob.glob(os.path.join(PROCESSED_DIR, f"Processed_*_{MEAS_NAME}_{ch}.root"))
+                rf = uproot.open(roots[0]) if roots else None
+            except ImportError:
+                rf = None
+        ncols = min(5, len(wps))
+        nrows = math.ceil(len(wps) / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.5 * nrows), squeeze=False)
+        axf = axes.ravel()
+        try:
+            for ax, wp in zip(axf, wps):
+                f1 = np.load(os.path.join(filters_dir, f"f1_ch{ch}_wp{wp}.npy"))
+                f2 = np.load(os.path.join(filters_dir, f"f2_ch{ch}_wp{wp}.npy"))
+                kernel_path = os.path.join(filters_dir, f"kernel_ch{ch}_wp{wp}.npy")
+                if os.path.exists(kernel_path):
+                    W = np.load(kernel_path)                      # kernel salvato (meta' indip.)
+                elif rf is not None:                              # fallback: ricostruisci W
+                    lam_path = os.path.join(filters_dir, f"lambda_ch{ch}_wp{wp}.npy")
+                    lam = np.load(lam_path) if os.path.exists(lam_path) else lam_scalar.get((ch, wp))
+                    mp, nps = _load_ap_nps(rf, wp)
+                    W = (_wiener_kernel_half(mp, nps, lam)
+                         if (lam is not None and mp is not None) else None)
+                else:
+                    W = None
+                if W is None:
+                    ax.axis("off"); continue
+                m = min(len(f1), len(f2), len(W))
+                freq = np.linspace(0.0, SAMPLING_RATE / 2.0, m)   # solo frequenze positive
+                ax.plot(freq, np.abs(f1[:m] * W[:m]), lw=1.0, color="#1f77b4", label=r"$g_1=f_1 W$")
+                ax.plot(freq, np.abs(f2[:m] * W[:m]), lw=1.0, color="#d62728", label=r"$g_2=f_2 W$")
+                ax.set_yscale("log"); ax.set_xscale("log")
+                vb = vb_of.get((ch, wp))
+                ax.set_title(f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else ""), fontsize=9)
+                ax.grid(True, which="both", alpha=0.3)
+                ax.tick_params(labelsize=7)
+        finally:
+            if rf is not None:
+                rf.close()
+        for ax in axf[len(wps):]:
+            ax.axis("off")
+        axf[0].legend(fontsize=9, loc="upper right")
+        fig.suptitle(rf"Total filters $g_i = f_i \cdot W$ — Ch {ch}  ·  Measurement {MEAS_NAME}",
+                     fontsize=14, fontweight="bold")
+        fig.supxlabel("Frequency (Hz)", fontsize=11)
+        fig.supylabel(r"$|g_i(f)|$", fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        out_png = p(f"total_filters_ch{ch}_m205.png")
+        fig.savefig(out_png, dpi=180)
+        plt.close(fig)
+        n_imgs += 1
+        print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
+    if n_imgs == 0:
+        print(f"[INFO] nessun filtro totale prodotto (mancano .npy/lambda/ROOT).")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Main
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
-    parser = argparse.ArgumentParser(description="Analisi e plot dei risultati BI (m205).")
-    parser.add_argument("--wiener", action="store_true",
-                        help="modalità Wiener: usa i risultati di analyse_BI_m205_wiener.py "
-                             "(m205_results_wiener) e aggiunge il suffisso _wiener a TUTTI i "
-                             "file di output. --bi-csv/--outdir espliciti hanno la precedenza.")
-    parser.add_argument("--bi-csv", default=None,
-                        help="CSV dei risultati BI (default: dipende da --wiener)")
-    parser.add_argument("--amp-csv", default=DEFAULT_AMP_CSV, help="CSV ampiezze/timing/spettro")
-    parser.add_argument("--timing-csv", default=DEFAULT_TIMING_CSV,
-                        help="CSV timing (fallback per rho_t=SNR*beta se non gia' nel BI CSV)")
-    parser.add_argument("--outdir", default=None, help="cartella di output (default: accanto al BI CSV)")
-    parser.add_argument("--filters-dir", default=None,
-                        help="cartella coi .npy dei filtri f1/f2 addestrati "
-                             "(default: <dir del BI CSV>/trained_filters)")
-    parser.add_argument("--exclude", nargs="*", type=int, default=None,
-                        help="canali da escludere, es. --exclude 31 94")
-    args = parser.parse_args()
+    if not os.path.exists(BI_CSV):
+        raise SystemExit(f"[ERROR] CSV BI non trovato: {BI_CSV}")
 
-    # ── Risoluzione della modalità → percorsi e suffisso dei file di output ─────
-    #   In modalità Wiener: BI CSV di default in m205_results_wiener e suffisso
-    #   "_wiener" su ogni output; un --bi-csv esplicito resta comunque rispettato.
-    suffix = "_wiener" if args.wiener else ""
-    if args.bi_csv is None:
-        args.bi_csv = DEFAULT_BI_CSV_WIENER if args.wiener else DEFAULT_BI_CSV
-
-    if not os.path.exists(args.bi_csv):
-        raise SystemExit(f"[ERROR] CSV BI non trovato: {args.bi_csv}")
-
-    rows = read_bi_results(args.bi_csv)
+    rows = read_bi_results(BI_CSV)
     if not rows:
-        raise SystemExit(f"[ERROR] Nessun dato leggibile in {args.bi_csv}")
+        raise SystemExit(f"[ERROR] Nessun dato leggibile in {BI_CSV}")
 
-    amap = read_amplitudes(args.amp_csv)
+    amap = read_amplitudes(AMP_CSV)
     merge_timing(rows, amap)
 
-    # Timing figure of merit rho_t = SNR*beta. I CSV arricchiti (OF e Wiener) lo
-    # contengono gia' inline: il CSV timing serve solo da fallback per le righe
-    # che non ce l'hanno (es. vecchi BI_results senza la colonna rho_t).
+    # rho_t = SNR*beta. I CSV arricchiti (OF e Wiener) lo contengono gia' inline:
+    # il CSV timing serve solo da fallback per le righe che non ce l'hanno.
     if any(r.get("rho_t") is None for r in rows):
-        tmap = read_timing(args.timing_csv)
+        tmap = read_timing(TIMING_CSV)
         for r in rows:
             if r.get("rho_t") is None:
                 r["rho_t"] = tmap.get((r["channel"], round(r["vbias"], 3)))
 
     # ── Esclusione canali ──────────────────────────────────────────────────────
-    exclude = set(EXCLUDE_CHANNELS) | set(args.exclude or [])
-    if exclude:
+    if EXCLUDE_CHANNELS:
         before = len(rows)
-        rows = [r for r in rows if r["channel"] not in exclude]
-        print(f"Canali esclusi {sorted(exclude)}: rimosse {before - len(rows)} righe.")
+        rows = [r for r in rows if r["channel"] not in EXCLUDE_CHANNELS]
+        print(f"Canali esclusi {sorted(EXCLUDE_CHANNELS)}: rimosse {before - len(rows)} righe.")
         if not rows:
             raise SystemExit("[ERROR] Tutti i dati sono stati esclusi.")
 
-    outdir = args.outdir or os.path.dirname(os.path.abspath(args.bi_csv))
-    os.makedirs(outdir, exist_ok=True)
-    filters_dir = args.filters_dir or os.path.join(
-        os.path.dirname(os.path.abspath(args.bi_csv)), "trained_filters")
-
+    os.makedirs(OUTDIR, exist_ok=True)
     colors = channel_colors([r["channel"] for r in rows])
 
     def p(name):
-        """Percorso di output: inserisce il suffisso di modalità (es. _wiener)
-        prima dell'estensione, così tutti i file cambiano nome coerentemente."""
+        """Percorso di output: inserisce SUFFIX (set di risultati) e NAME_TAG
+        (modalità bad-channels) prima dell'estensione, così tutti i file cambiano
+        nome coerentemente e le due modalità non si sovrascrivono."""
         root, ext = os.path.splitext(name)
-        return os.path.join(outdir, f"{root}{suffix}{ext}")
+        return os.path.join(OUTDIR, f"{root}{SUFFIX}{NAME_TAG}{ext}")
+
+    # Le immagini dei filtri (f1/f2, lambda(f), totali f·W) vanno in una cartella
+    # dedicata, per canale/WP, dentro la cartella dei risultati.
+    filter_dir = os.path.join(OUTDIR, "filter_plots")
+    os.makedirs(filter_dir, exist_ok=True)
+
+    def pf(name):
+        """Come p(), ma nella sottocartella dedicata ai plot dei filtri."""
+        root, ext = os.path.splitext(name)
+        return os.path.join(filter_dir, f"{root}{SUFFIX}{NAME_TAG}{ext}")
 
     n_ch = len(set(r["channel"] for r in rows))
-    print(f"Dati: {len(rows)} punti su {n_ch} canali.\nGenero i plot in {outdir}:")
+    print(f"Dati: {len(rows)} punti su {n_ch} canali.\nGenero i plot in {OUTDIR}:")
 
     # ── Canva 1: BI vs tutti i parametri (una sola immagine, 3x3) ──────────────
     bi_specs = [
@@ -655,16 +663,10 @@ def main():
             print(f"  → {os.path.basename(out_lambda)}")
         plt.close(fig)
 
-    # ── Scatter 3D interattivo BI vs SNR vs risetime (HTML) ─────────────────────
-    plot_bi_3d_html(rows, p("BI_vs_SNR_risetime_3D_m205.html"), colors)
-
-    # ── Filtri di banda addestrati f1, f2 (un'immagine per canale, se presenti) ─
-    plot_trained_filters(rows, filters_dir, p)
-    # ── lambda(f) addestrato (Wiener freq-dipendente): un'immagine per canale ────
-    plot_trained_lambda(rows, filters_dir, p)
-
-    # ── Riepilogo punto ottimo ─────────────────────────────────────────────────
-    summarize_best(rows, p("BI_summary_m205.csv"), p("BI_min_per_channel_m205.png"), colors)
+    # ── Plot dei filtri, nella sottocartella dedicata (un'immagine per canale) ──
+    plot_trained_filters(rows, FILTERS_DIR, pf)   # filtri di banda f1, f2
+    plot_trained_lambda(rows, FILTERS_DIR, pf)    # lambda(f) (Wiener freq-dipendente)
+    plot_total_filters(rows, FILTERS_DIR, pf)     # filtri totali g_i = f_i · W
 
     print("\nFatto.")
 

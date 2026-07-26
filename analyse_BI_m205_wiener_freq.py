@@ -20,10 +20,11 @@ e' identico ad analyse_BI_m205_wiener.py; cambiano la stima del BI, le cartelle 
 output (m205_results_wiener_freq) e il prefisso dei job (BIWF).
 
 Oltre al CSV dei risultati (BI_results_m205_wiener_freq.csv), ogni worker salva i
-filtri di banda ADDESTRATI f1, f2 e la curva lambda(f) come vettori .npy nella
-cartella m205_results_wiener_freq/trained_filters/ (file f1_ch{ch}_wp{wp}.npy,
-f2_ch{ch}_wp{wp}.npy, lambda_ch{ch}_wp{wp}.npy). Per f1/f2 si salva solo la META'
-INDIPENDENTE dello spettro (i primi N//2+1 bin, da DC a Nyquist); il filtro completo
+filtri di banda ADDESTRATI f1, f2, la curva lambda(f) e il KERNEL di Wiener W come
+vettori .npy nella cartella m205_results_wiener_freq/trained_filters/ (file
+f1_ch{ch}_wp{wp}.npy, f2_ch{ch}_wp{wp}.npy, lambda_ch{ch}_wp{wp}.npy,
+kernel_ch{ch}_wp{wp}.npy). Per f1/f2 e il kernel si salva solo la META'
+INDIPENDENTE dello spettro (i primi N//2+1 bin, da DC a Nyquist); il vettore completo
 si ricostruisce con full = np.concatenate([half, half[-2:0:-1]]). lambda(f) e' gia'
 la meta' indipendente.
 
@@ -198,18 +199,19 @@ def _independent_half(vec):
     return vec[: len(vec) // 2 + 1]
 
 
-def save_filters_npy(dirpath: str, channel, wp, f1, f2, lam_freq):
-    """Salva i filtri di banda addestrati f1, f2 e la curva lambda(f) come .npy nella
-    cartella dei filtri. Ogni coppia (canale, WP) scrive file con nomi distinti,
-    quindi non serve alcun lock: i job non si pestano i piedi. Di f1/f2 si salva solo
-    la meta' indipendente dello spettro (N//2+1 bin); il filtro completo si
-    ricostruisce con full = np.concatenate([half, half[-2:0:-1]]). lambda(f) e' gia'
-    la meta' indipendente (dall'ottimizzatore)."""
+def save_filters_npy(dirpath: str, channel, wp, f1, f2, lam_freq, kernel):
+    """Salva come .npy i filtri di banda addestrati f1, f2, la curva lambda(f) e il
+    KERNEL di Wiener W. Ogni coppia (canale, WP) scrive file con nomi distinti,
+    quindi non serve alcun lock. Di f1/f2 e del kernel si salva solo la meta'
+    indipendente dello spettro (N//2+1 bin); il vettore completo si ricostruisce con
+    full = np.concatenate([half, half[-2:0:-1]]). lambda(f) e' gia' la meta'
+    indipendente. Il filtro TOTALE applicato ai dati e' g_i = f_i * W (kernel)."""
     os.makedirs(dirpath, exist_ok=True)
     np.save(os.path.join(dirpath, f"f1_ch{channel}_wp{wp}.npy"), _independent_half(f1))
     np.save(os.path.join(dirpath, f"f2_ch{channel}_wp{wp}.npy"), _independent_half(f2))
     np.save(os.path.join(dirpath, f"lambda_ch{channel}_wp{wp}.npy"),
             np.asarray(lam_freq).ravel())
+    np.save(os.path.join(dirpath, f"kernel_ch{channel}_wp{wp}.npy"), _independent_half(kernel))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -306,12 +308,13 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "lambda_max": float(np.max(lam_freq)),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
-        # Filtri di banda addestrati e lambda(f) (vettori), salvati a parte come .npy
-        # in FILTERS_DIR; non entrano nel BI CSV (append_row_to_csv tiene solo
-        # CSV_FIELDNAMES).
+        # Filtri di banda, lambda(f) e kernel di Wiener (vettori), salvati a parte
+        # come .npy in FILTERS_DIR; non entrano nel BI CSV (append_row_to_csv tiene
+        # solo CSV_FIELDNAMES). Il filtro totale applicato ai dati e' g_i = f_i * W.
         "f1": f1_opt.detach().cpu().numpy(),
         "f2": f2_opt.detach().cpu().numpy(),
         "lambda_freq": lam_freq,
+        "kernel": W_unit.detach().cpu().numpy(),
     }
 
 
@@ -354,7 +357,7 @@ def run_worker(channel: int, wp: int):
         res = estimate_BI_for_wp(str(channel), wp, vbias, meanpulse, nps,
                                  signal_amp, SAMPLING_RATE, shared, device)
         append_row_to_csv(OUTPUT_CSV, res)
-        save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["lambda_freq"])
+        save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["lambda_freq"], res["kernel"])
         print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
 
     except Exception as e:
