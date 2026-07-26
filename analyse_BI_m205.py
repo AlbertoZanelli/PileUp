@@ -88,6 +88,20 @@ def wp_to_vbias(wp_idx: int) -> float:
     return VBIAS_LIST[wp_idx // 2]
 
 
+_FLATTOP_FACTOR = {}
+def flattop_power_factor(n: int) -> float:
+    """Fattore di correzione di potenza della finestra FLATTOP usata per la NPS:
+    N / sum(w^2) = 1/mean(w^2). Compensa l'attenuazione di potenza che la finestra
+    introduce sul rumore. Per N=10000 vale ~5.7077, cioe' praticamente il vecchio
+    valore hardcoded 5.708 (differenza ~0.004%). scipy importato pigramente (solo
+    nel worker), cosi' l'orchestratore resta leggero; il risultato e' in cache."""
+    if n not in _FLATTOP_FACTOR:
+        from scipy.signal.windows import flattop
+        w = flattop(n)
+        _FLATTOP_FACTOR[n] = float(n / np.sum(w ** 2))
+    return _FLATTOP_FACTOR[n]
+
+
 def load_signal_amplitudes(csv_path: str) -> dict:
     """Legge la mappa (canale, V_bias) -> ampiezza dal CSV di plot_all_root.py.
     Il CSV salva l'ampiezza in mV: qui viene riconvertita in V.
@@ -298,7 +312,7 @@ def run_worker(channel: int, wp: int):
             nps = np.asarray(hist_nps.values(), dtype=float)
             nps = np.concatenate([nps, nps[-2:0:-1]])
             
-            nps *= 5.708
+            nps *= flattop_power_factor(WINDOW_SIZE)   # ~5.708: N/sum(w^2), finestra flattop
             nps *= WINDOW_SIZE**2
             nps *= (1 / SAMPLING_TIME)
 
