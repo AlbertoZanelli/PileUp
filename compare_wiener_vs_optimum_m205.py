@@ -3,10 +3,20 @@ compare_wiener_vs_optimum_m205.py
 =================================
 Confronta DUE set di risultati BI (m205) qualsiasi, punto per punto (canale,
 V_bias). Generico: "A" e' il riferimento (baseline), "B" e' il risultato che si
-vuole valutare. Casi d'uso tipici:
-  - filtro OTTIMO (A) vs filtro di WIENER a lambda scalare (B)   [default]
-  - Wiener lambda scalare (A) vs Wiener lambda(f) freq-dipendente (B)
-  - due qualsiasi CSV di risultati BI con le colonne channel, vbias, BI (+ rho_t).
+vuole valutare.
+
+Quali due set confrontare si sceglie con le DUE variabili SUFFIX_A e SUFFIX_B in
+testa al file (sezione CONFIGURAZIONE), con gli stessi suffissi di
+plot_BI_results.py: da ognuna derivano la cartella dei risultati e il CSV dei BI,
+e dalla coppia derivano etichette, tag e cartella di output.
+  ""             -> filtro ottimo          (m205_results_octopus)
+  "_wiener"      -> Wiener lambda scalare   (m205_results_wiener)
+  "_wiener_freq" -> Wiener lambda(f)        (m205_results_wiener_freq)
+Casi d'uso tipici:
+  - SUFFIX_A = ""        , SUFFIX_B = "_wiener"       -> ottimo vs Wiener scalare
+  - SUFFIX_A = "_wiener" , SUFFIX_B = "_wiener_freq"  -> Wiener scalare vs lambda(f)
+
+Nessun argomento da linea di comando: si configura tutto dalle costanti in testa.
 
 Il BI e' da MINIMIZZARE: il "miglioramento" di B su A e' la DIMINUZIONE percentuale
 del BI, punto per punto:
@@ -16,9 +26,10 @@ del BI, punto per punto:
   > 0  -> B abbassa il BI rispetto ad A (meglio)
   < 0  -> B peggiora il BI
 
-Output: una CARTELLA DEDICATA che esplicita il confronto, di default
+Output: una CARTELLA DEDICATA che esplicita il confronto,
     <root>/comparisons/<tag>/            (es. comparisons/OF_vs_WF/)
-con dentro (col <tag> = --tag nel nome dei file):
+dove <tag> deriva dalla coppia di suffissi (OF, WF, WFfreq). Dentro, col <tag> nel
+nome dei file:
   - BI_improvement_vs_Vbias_<tag>_m205.png    : miglioramento % vs V_bias, per canale
   - BI_improvement_per_channel_<tag>_m205.png : miglioramento medio per canale (bar)
   - BI_vs_Vbias_<tag>_m205.png                : griglia per canale, curve BI vs V_bias (A e B)
@@ -31,21 +42,14 @@ con dentro (col <tag> = --tag nel nome dei file):
         ricostruito da ROOT + lambda.
 A video: tabella dei miglioramenti medi per canale e miglioramento medio globale.
 
+Modalità BAD_CHANNELS (come in plot_BI_results.py): se True confronta i 4 canali
+scartati (37, 40, 41, 94) invece dei 5 buoni, aggiunge "_bad" al nome di tutti i
+file e usa una palette diversa per i canali (Dark2 invece di tab10), così le figure
+delle due modalità convivono nella stessa cartella senza confondersi.
+
 I CSV dei risultati vengono cercati nella root del progetto (la cartella che
 contiene m205_results_octopus), sia che lo script stia in quella root sia in una
 sottocartella come m204_comparison/.
-
-Uso:
-    # default: filtro ottimo (A) vs Wiener lambda scalare (B)  -> comparisons/OF_vs_WF/
-    python compare_wiener_vs_optimum_m205.py
-
-    # Wiener lambda scalare (A) vs Wiener lambda(f) (B)  -> comparisons/WF_vs_WFfreq/
-    python compare_wiener_vs_optimum_m205.py \\
-        --csv-a m205_results_wiener/BI_results_m205_wiener.csv \\
-        --csv-b m205_results_wiener_freq/BI_results_m205_wiener_freq.csv \\
-        --label-a "Wiener lambda" --label-b "Wiener lambda(f)" --tag WF_vs_WFfreq
-
-    python compare_wiener_vs_optimum_m205.py --exclude 91
 """
 
 import os
@@ -53,7 +57,6 @@ import re
 import csv
 import glob
 import math
-import argparse
 
 import numpy as np
 import matplotlib
@@ -73,15 +76,64 @@ def _find_root():
 
 
 ROOT = _find_root()
-DEFAULT_A_CSV  = os.path.join(ROOT, "m205_results_octopus", "BI_results_m205.csv")
-DEFAULT_B_CSV  = os.path.join(ROOT, "m205_results_wiener", "BI_results_m205_wiener.csv")
-DEFAULT_LABEL_A = "Optimum filter"
-DEFAULT_LABEL_B = "Wiener filter"
-DEFAULT_TAG     = "OF_vs_WF"
-MEAS_NAME      = "000205"
+MEAS_NAME = "000205"
 
-# Canali esclusi di default (in aggiunta a quelli passati con --exclude)
-EXCLUDE_CHANNELS = [37, 40, 41, 94]
+# ═════════════════════════════════════════════════════════════════════════════
+# CONFIGURAZIONE  —  quali due set confrontare
+# ═════════════════════════════════════════════════════════════════════════════
+# Stessi suffissi di plot_BI_results.py: A = riferimento (baseline), B = valutato.
+#   ""             -> filtro ottimo         (cartella m205_results_octopus)
+#   "_wiener"      -> Wiener lambda scalare  (cartella m205_results_wiener)
+#   "_wiener_freq" -> Wiener lambda(f)       (cartella m205_results_wiener_freq)
+SUFFIX_A = ""
+SUFFIX_B = "_wiener"
+
+# Modalità "bad channels": se True confronta i 4 canali normalmente scartati
+# (37, 40, 41, 94) invece dei 5 buoni; ai file viene aggiunto "_bad" nel nome e i
+# canali usano una palette diversa, per non confondere le due modalità.
+BAD_CHANNELS = True
+
+# Canali da escludere IN AGGIUNTA a quelli della modalità (es. [91] per lasciare
+# fuori il canale anomalo).
+EXTRA_EXCLUDE = []
+
+# Etichette (per titoli e legende, in inglese) e sigle (per il tag del confronto)
+# dei set di risultati, indicizzate dal suffisso.
+SET_LABELS = {"": "Optimum filter", "_wiener": "Wiener (scalar λ)",
+              "_wiener_freq": "Wiener (λ(f))"}
+SET_CODES  = {"": "OF", "_wiener": "WF", "_wiener_freq": "WFfreq"}
+
+
+def _bi_csv(suffix: str) -> str:
+    """CSV dei risultati BI del set identificato dal suffisso (stessa convenzione di
+    plot_BI_results.py: il set base "" vive nella cartella ..._octopus)."""
+    return os.path.join(ROOT, "m205_results" + (suffix or "_octopus"),
+                        "BI_results_m205" + suffix + ".csv")
+
+
+def _label(suffix: str) -> str:
+    return SET_LABELS.get(suffix, suffix.lstrip("_") or "optimum")
+
+
+def _code(suffix: str) -> str:
+    return SET_CODES.get(suffix, suffix.lstrip("_") or "OF")
+
+
+CSV_A,   CSV_B   = _bi_csv(SUFFIX_A), _bi_csv(SUFFIX_B)
+LABEL_A, LABEL_B = _label(SUFFIX_A),  _label(SUFFIX_B)
+TAG              = f"{_code(SUFFIX_A)}_vs_{_code(SUFFIX_B)}"   # es. OF_vs_WF
+OUTDIR           = os.path.join(ROOT, "comparisons", TAG)
+
+# Canali esclusi, tag nel nome dei file e palette, secondo la modalità BAD_CHANNELS
+# (identico a plot_BI_results.py).
+if BAD_CHANNELS:
+    EXCLUDE_CHANNELS = [31, 34, 40, 71, 83, 91]   # tieni i "cattivi": 37, 40, 41, 94
+    NAME_TAG = "_bad"
+    CHANNEL_CMAP = "Dark2"
+else:
+    EXCLUDE_CHANNELS = [37, 40, 41, 94]        # tieni i "buoni": 31, 34, 71, 83, 91
+    NAME_TAG = ""
+    CHANNEL_CMAP = "tab10"
 
 # Colori fissi per i due set (indipendenti dal canale): navy = A (baseline),
 # ambra = B (valutato).
@@ -116,10 +168,11 @@ def read_bi_map(path: str) -> dict:
 
 
 def channel_colors(channels: list) -> dict:
-    """Una tonalità distinta e stabile per canale (coerente con plot_BI_results.py)."""
-    cmap = plt.get_cmap("tab10")
+    """Una tonalità distinta e stabile per canale (coerente con plot_BI_results.py):
+    la palette dipende dalla modalità, tab10 per i canali buoni e Dark2 per i cattivi."""
+    cmap = plt.get_cmap(CHANNEL_CMAP)
     chs = sorted(set(channels))
-    return {ch: cmap(i % 10) for i, ch in enumerate(chs)}
+    return {ch: cmap(i % cmap.N) for i, ch in enumerate(chs)}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -410,32 +463,18 @@ def plot_total_filter_compare(which, fdir_a, fdir_b, lam_a, lam_b,
 # Main
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
-    parser = argparse.ArgumentParser(
-        description="Confronto generico di due set di risultati BI (m205): A (baseline) vs B.")
-    parser.add_argument("--csv-a", "--optimum-csv", dest="csv_a", default=DEFAULT_A_CSV,
-                        help="CSV del set A (baseline). Alias storico: --optimum-csv")
-    parser.add_argument("--csv-b", "--wiener-csv", dest="csv_b", default=DEFAULT_B_CSV,
-                        help="CSV del set B (valutato). Alias storico: --wiener-csv")
-    parser.add_argument("--label-a", default=DEFAULT_LABEL_A, help="etichetta del set A")
-    parser.add_argument("--label-b", default=DEFAULT_LABEL_B, help="etichetta del set B")
-    parser.add_argument("--tag", default=DEFAULT_TAG,
-                        help="nome del confronto: cartella comparisons/<tag>/ e suffisso dei file")
-    parser.add_argument("--outdir", default=None,
-                        help="cartella di output (default: <root>/comparisons/<tag>)")
-    parser.add_argument("--exclude", nargs="*", type=int, default=None,
-                        help="canali da escludere, es. --exclude 31 94")
-    args = parser.parse_args()
-
-    for lab, path in ((args.label_a, args.csv_a), (args.label_b, args.csv_b)):
+    if SUFFIX_A == SUFFIX_B:
+        raise SystemExit("[ERROR] SUFFIX_A e SUFFIX_B sono uguali: niente da confrontare.")
+    for lab, path in ((LABEL_A, CSV_A), (LABEL_B, CSV_B)):
         if not os.path.exists(path):
             raise SystemExit(f"[ERROR] CSV '{lab}' non trovato: {path}")
 
-    map_a = read_bi_map(args.csv_a)
-    map_b = read_bi_map(args.csv_b)
+    map_a = read_bi_map(CSV_A)
+    map_b = read_bi_map(CSV_B)
     if not map_a or not map_b:
         raise SystemExit("[ERROR] Uno dei due CSV non contiene BI validi.")
 
-    exclude = set(EXCLUDE_CHANNELS) | set(args.exclude or [])
+    exclude = set(EXCLUDE_CHANNELS) | set(EXTRA_EXCLUDE)
     rows = build_comparison(map_a, map_b, exclude)
     if not rows:
         raise SystemExit("[ERROR] Nessuna coppia (canale, V_bias) in comune tra i due CSV.")
@@ -448,22 +487,22 @@ def main():
     per_ch_mean = mean(list(per_ch.values()))                          # media delle medie per canale
 
     # Cartella dedicata che esplicita il confronto: comparisons/<tag>/.
-    outdir = args.outdir or os.path.join(ROOT, "comparisons", args.tag)
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(OUTDIR, exist_ok=True)
     colors = channel_colors(channels)
 
     n_common = len(rows)
     n_a_only = len(set(map_a) - set(map_b))
     n_b_only = len(set(map_b) - set(map_a))
-    print(f"Confronto:  A = {args.label_a}   vs   B = {args.label_b}")
+    print(f"Confronto:  A = {LABEL_A}   vs   B = {LABEL_B}")
     print(f"Punti in comune: {n_common} su {len(channels)} canali "
           f"(solo-A: {n_a_only}, solo-B: {n_b_only}).")
     if exclude:
-        print(f"Canali esclusi: {sorted(exclude)}")
-    print(f"Genero l'output in {outdir}:")
+        print(f"Canali esclusi: {sorted(exclude)}"
+              + ("  (modalità bad channels)" if BAD_CHANNELS else ""))
+    print(f"Genero l'output in {OUTDIR}:")
 
     # ── Tabella a video ────────────────────────────────────────────────────────
-    print(f"\n  Miglioramento % del BI (B={args.label_b} vs A={args.label_a})  "
+    print(f"\n  Miglioramento % del BI (B={LABEL_B} vs A={LABEL_A})  "
           f"[>0 = B abbassa il BI]")
     print(f"  {'Ch':>4} {'mean %':>9} {'min %':>9} {'max %':>9} {'n':>4}")
     for ch in channels:
@@ -474,37 +513,37 @@ def main():
     print(f"  Media globale (su tutti i punti):     {global_mean:+.2f} %")
 
     # ── Plot + CSV ─────────────────────────────────────────────────────────────
-    tag = f"_{args.tag}" if args.tag else ""
-
     def p(name):
-        return os.path.join(outdir, name)
+        """Percorso di output: aggiunge il TAG del confronto e l'eventuale "_bad"
+        (modalità bad-channels) al nome, così le due modalità non si sovrascrivono."""
+        root, ext = os.path.splitext(name)
+        return os.path.join(OUTDIR, f"{root}_{TAG}{NAME_TAG}_m205{ext}")
 
     print()
-    plot_improvement_vs_vbias(rows, colors, p(f"BI_improvement_vs_Vbias{tag}_m205.png"),
-                              args.label_a, args.label_b)
+    plot_improvement_vs_vbias(rows, colors, p("BI_improvement_vs_Vbias.png"),
+                              LABEL_A, LABEL_B)
     plot_improvement_per_channel(per_ch, global_mean, colors,
-                                 p(f"BI_improvement_per_channel{tag}_m205.png"),
-                                 args.label_a, args.label_b)
+                                 p("BI_improvement_per_channel.png"),
+                                 LABEL_A, LABEL_B)
     # Confronto diretto delle due curve BI (A vs B), un pannello per canale.
-    plot_bi_compare_grid(rows, p(f"BI_vs_Vbias{tag}_m205.png"), "vbias",
-                         r"$V_{bias}$ (V)", f"BI vs Bias Voltage — {args.label_b} vs {args.label_a}",
-                         args.label_a, args.label_b, logx=False)
-    plot_bi_compare_grid(rows, p(f"BI_vs_SNRbeta{tag}_m205.png"), "rho_t",
-                         r"SNR·$\beta$ (Hz)", f"BI vs SNR·$\\beta$ — {args.label_b} vs {args.label_a}",
-                         args.label_a, args.label_b, logx=True)
-    write_csv(rows, per_ch, global_mean, p(f"BI_improvement{tag}_m205.csv"),
-              args.label_a, args.label_b)
+    plot_bi_compare_grid(rows, p("BI_vs_Vbias.png"), "vbias",
+                         r"$V_{bias}$ (V)", f"BI vs Bias Voltage — {LABEL_B} vs {LABEL_A}",
+                         LABEL_A, LABEL_B, logx=False)
+    plot_bi_compare_grid(rows, p("BI_vs_SNRbeta.png"), "rho_t",
+                         r"SNR·$\beta$ (Hz)", f"BI vs SNR·$\\beta$ — {LABEL_B} vs {LABEL_A}",
+                         LABEL_A, LABEL_B, logx=True)
+    write_csv(rows, per_ch, global_mean, p("BI_improvement.csv"), LABEL_A, LABEL_B)
 
     # ── Confronto dei filtri totali g=f·kernel (una griglia per f1 e una per f2) ─
-    fdir_a, fdir_b = _filter_dir(args.csv_a), _filter_dir(args.csv_b)
+    fdir_a, fdir_b = _filter_dir(CSV_A), _filter_dir(CSV_B)
     if os.path.isdir(fdir_a) and os.path.isdir(fdir_b):
-        tf_dir = os.path.join(outdir, "total_filters")
+        tf_dir = os.path.join(OUTDIR, "total_filters")
         os.makedirs(tf_dir, exist_ok=True)
-        lam_a, lam_b = read_lambda_scalar(args.csv_a), read_lambda_scalar(args.csv_b)
+        lam_a, lam_b = read_lambda_scalar(CSV_A), read_lambda_scalar(CSV_B)
         print("Filtri totali (griglia per f1 e per f2, col rapporto B/A):")
         for which in ("f1", "f2"):
             plot_total_filter_compare(which, fdir_a, fdir_b, lam_a, lam_b,
-                                      args.label_a, args.label_b, tf_dir, args.tag,
+                                      LABEL_A, LABEL_B, tf_dir, TAG + NAME_TAG,
                                       exclude=exclude)
     else:
         print("[INFO] cartelle trained_filters mancanti per uno dei due modelli: "

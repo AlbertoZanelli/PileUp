@@ -34,8 +34,10 @@ Plot prodotti (nella cartella dei risultati, col suffisso):
                                          da ROOT + lambda); |g_i(f)|, freq positive
 
 Modalità BAD_CHANNELS: se True analizza i 4 canali scartati (37, 40, 41, 94) invece
-dei 5 buoni, e aggiunge "_bad" al nome delle immagini per non sovrascrivere quelle
-standard. Altrimenti analizza i 5 buoni (31, 34, 71, 83, 91).
+dei 5 buoni, aggiunge "_bad" al nome delle immagini per non sovrascrivere quelle
+standard e usa una PALETTE DIVERSA (Dark2, tonalità scure) invece di quella dei
+canali buoni (tab10), così le figure delle due modalità non si confondono.
+Altrimenti analizza i 5 buoni (31, 34, 71, 83, 91).
 """
 
 import os
@@ -62,7 +64,7 @@ SUFFIX = "_wiener"
 # Modalità "bad channels": se True analizza i 4 canali normalmente scartati
 # (37, 40, 41, 94) invece dei 5 buoni, e alle immagini viene aggiunto "_bad" nel
 # nome per non sovrascrivere quelle standard.
-BAD_CHANNELS = False
+BAD_CHANNELS = True
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(BASE_DIR, "m205_results" + (SUFFIX or "_octopus"))
@@ -77,13 +79,18 @@ SAMPLING_RATE = 10_000.0   # m205: 10 kHz (asse frequenze dei filtri)
 WINDOW_SIZE   = 10_000     # campioni per finestra (per ricostruire il kernel Wiener)
 PROCESSED_DIR = os.path.join(BASE_DIR, "Processed")   # file ROOT con AP e NPS
 
-# Canali da escludere e tag nel nome dei file, secondo la modalità BAD_CHANNELS.
+# Canali da escludere, tag nel nome dei file e PALETTE, secondo la modalità
+# BAD_CHANNELS. La palette e' diversa nelle due modalità (tab10 = brillante per i
+# canali buoni, Dark2 = tonalità scure/smorzate per i cattivi) così le figure delle
+# due modalità sono distinguibili a colpo d'occhio anche messe una accanto all'altra.
 if BAD_CHANNELS:
-    EXCLUDE_CHANNELS = [31, 34, 71, 83, 91]   # tieni i "cattivi": 37, 40, 41, 94
+    EXCLUDE_CHANNELS = [31, 34, 40, 71, 83, 91]   # tieni i "cattivi": 37, 40, 41, 94
     NAME_TAG = "_bad"
+    CHANNEL_CMAP = "Dark2"
 else:
     EXCLUDE_CHANNELS = [37, 40, 41, 94]        # tieni i "buoni": 31, 34, 71, 83, 91
     NAME_TAG = ""
+    CHANNEL_CMAP = "tab10"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -187,10 +194,12 @@ def merge_timing(rows: list, amap: dict):
 # ═════════════════════════════════════════════════════════════════════════════
 def channel_colors(channels: list) -> dict:
     """Una tonalità distinta e stabile per canale, coerente fra tutti i grafici.
-    tab10 dà hue ben separate (necessario per la sfumatura per-canale by V_bias)."""
-    cmap = plt.get_cmap("tab10")
+    La palette (CHANNEL_CMAP) dipende dalla modalità: tab10 per i canali buoni,
+    Dark2 per i cattivi. Entrambe qualitative, con hue ben separate (necessario per
+    la sfumatura per-canale by V_bias)."""
+    cmap = plt.get_cmap(CHANNEL_CMAP)
     chs = sorted(set(channels))
-    return {ch: cmap(i % 10) for i, ch in enumerate(chs)}
+    return {ch: cmap(i % cmap.N) for i, ch in enumerate(chs)}
 
 
 def shade_by(base, t: float):
