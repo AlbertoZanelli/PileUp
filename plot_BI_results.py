@@ -60,6 +60,7 @@ BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BI_CSV  = os.path.join(BASE_DIR, "m205_results_octopus", "BI_results_m205.csv")
 DEFAULT_AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 DEFAULT_TIMING_CSV = os.path.join(BASE_DIR, "m205_results_octopus", "timing_SNR_m205.csv")
+
 # Modalità Wiener (--wiener): risultati di analyse_BI_m205_wiener.py. Le ampiezze
 # sono le stesse (proprietà del template), quindi cambia solo il CSV dei BI.
 DEFAULT_BI_CSV_WIENER = os.path.join(BASE_DIR, "m205_results_wiener", "BI_results_m205_wiener.csv")
