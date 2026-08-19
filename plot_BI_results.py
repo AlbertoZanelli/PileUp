@@ -22,7 +22,7 @@ Sorgenti dati:
 
 Plot prodotti (nella cartella dei risultati, col suffisso):
   - BI_vs_parameters_m205.png            (3x3) BI vs V_bias/risetime/decaytime/SNR/
-                                         amplitude/sigma/SNR-over-risetime/SNR*beta/HF-power
+                                         amplitude/sigma/R_bol/SNR*beta/HF-power
   - BI_vs_parameters_vbiascolor_m205.png (3x3) come sopra, hue=canale, shade=V_bias
   - params_vs_Vbias_m205.png             (2x2) amplitude/sigma/SNR/HF-power vs V_bias
   - BI_vs_Vbias_m205.png                 BI vs V_bias (figura dedicata)
@@ -64,7 +64,7 @@ SUFFIX = "_wiener"
 # Modalità "bad channels": se True analizza i 4 canali normalmente scartati
 # (37, 40, 41, 94) invece dei 5 buoni, e alle immagini viene aggiunto "_bad" nel
 # nome per non sovrascrivere quelle standard.
-BAD_CHANNELS = True
+BAD_CHANNELS = False
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(BASE_DIR, "m205_results" + (SUFFIX or "_octopus"))
@@ -72,6 +72,7 @@ BI_CSV      = os.path.join(RESULTS_DIR, "BI_results_m205" + SUFFIX + ".csv")
 FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")     # .npy di f1/f2/lambda(f)
 TIMING_CSV  = os.path.join(RESULTS_DIR, "timing_SNR_m205.csv")  # fallback per rho_t
 AMP_CSV     = os.path.join(BASE_DIR, "amplitudes_m205.csv")     # condiviso tra i set
+RBOL_TXT    = os.path.join(BASE_DIR, "load_curve_data_m205.txt")  # R_bol dall'Excel
 OUTDIR      = RESULTS_DIR                                       # output accanto ai dati
 
 MEAS_NAME     = "000205"
@@ -149,6 +150,26 @@ def read_amplitudes(path: str) -> dict:
                 "hf_power": _to_float(row.get("hf_power")),
             }
     return amap
+
+
+def read_rbol(path: str) -> dict:
+    """Mappa (canale, V_bias) -> R_bol in MOhm, dal txt scritto da
+    plot_load_curve_full_m205.py (colonna R_bol_Ohm, convertita in MOhm). Se il txt
+    non c'e', ritorna vuoto: il pannello BI vs R_bol resta senza dati."""
+    rmap = {}
+    if not os.path.exists(path):
+        print(f"[WARN] load-curve txt non trovato ({path}): esegui prima "
+              f"plot_load_curve_full_m205.py. Il pannello BI vs R_bol sara' vuoto.")
+        return rmap
+    with open(path, newline="") as f:
+        for row in csv.DictReader(r for r in f if not r.startswith("#")):
+            ch = _to_float(row.get("channel"))
+            vb = _to_float(row.get("bias_V"))
+            rb = _to_float(row.get("R_bol_Ohm"))
+            if ch is None or vb is None:
+                continue
+            rmap[(int(ch), round(vb, 3))] = rb / 1e6 if rb is not None else None
+    return rmap
 
 
 def read_timing(path: str) -> dict:
@@ -481,7 +502,9 @@ def plot_total_filters(rows, filters_dir, p):
     Il kernel viene letto dal .npy `kernel_ch*_wp*` se presente (lo salvano i worker:
     W per il Wiener, H_unit per il filtro ottimo); altrimenti, per i run Wiener
     vecchi, viene RICOSTRUITO dai file ROOT (AP+NPS) + lambda. Griglia: un pannello
-    per WP, |g_1| e |g_2| sovrapposti, solo frequenze positive (scala log)."""
+    per WP, g_1 e g_2 sovrapposti, solo frequenze positive. Produce TRE immagini per
+    canale: il MODULO (total_filters, log-log), la parte REALE (total_filters_real) e la
+    parte IMMAGINARIA (total_filters_imag), queste ultime in scala lineare (hanno segno)."""
     if not os.path.isdir(filters_dir):
         return
     lam_scalar = {(r["channel"], int(r["wp"])): r.get("lambda_wiener")
@@ -507,10 +530,20 @@ def plot_total_filters(rows, filters_dir, p):
                 rf = None
         ncols = min(5, len(wps))
         nrows = math.ceil(len(wps) / ncols)
-        fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.5 * nrows), squeeze=False)
-        axf = axes.ravel()
+        # TRE figure per canale (tutte log-log): modulo di g, |Re g| e |Im g|.
+        # key, funzione, testo, ylabel, nome file.
+        parts = [
+            ("abs",  np.abs,                       r"$|g_i|=|f_i W|$",            r"$|g_i(f)|$",      "total_filters",      r"$|g_1|=|f_1 W|$", r"$|g_2|=|f_2 W|$"),
+            ("real", lambda g: np.abs(np.real(g)), r"$|\Re\,g_i|=|\Re(f_i W)|$",  r"$|\Re\,g_i(f)|$", "total_filters_real", r"$|\Re\,g_1|$",    r"$|\Re\,g_2|$"),
+            ("imag", lambda g: np.abs(np.imag(g)), r"$|\Im\,g_i|=|\Im(f_i W)|$",  r"$|\Im\,g_i(f)|$", "total_filters_imag", r"$|\Im\,g_1|$",    r"$|\Im\,g_2|$"),
+        ]
+        figs = {}
+        for key, *_ in parts:
+            fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.5 * nrows), squeeze=False)
+            figs[key] = (fig, axes.ravel())
+        ylim = [np.inf, -np.inf]                       # limiti y CONDIVISI da tutti i pannelli delle 3 canve
         try:
-            for ax, wp in zip(axf, wps):
+            for i, wp in enumerate(wps):
                 f1 = np.load(os.path.join(filters_dir, f"f1_ch{ch}_wp{wp}.npy"))
                 f2 = np.load(os.path.join(filters_dir, f"f2_ch{ch}_wp{wp}.npy"))
                 kernel_path = os.path.join(filters_dir, f"kernel_ch{ch}_wp{wp}.npy")
@@ -524,33 +557,58 @@ def plot_total_filters(rows, filters_dir, p):
                          if (lam is not None and mp is not None) else None)
                 else:
                     W = None
+                vb = vb_of.get((ch, wp))
+                ttl = f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else "")
                 if W is None:
-                    ax.axis("off"); continue
+                    for key, *_ in parts:
+                        figs[key][1][i].axis("off")
+                    continue
                 m = min(len(f1), len(f2), len(W))
                 freq = np.linspace(0.0, SAMPLING_RATE / 2.0, m)   # solo frequenze positive
-                ax.plot(freq, np.abs(f1[:m] * W[:m]), lw=1.0, color="#1f77b4", label=r"$g_1=f_1 W$")
-                ax.plot(freq, np.abs(f2[:m] * W[:m]), lw=1.0, color="#d62728", label=r"$g_2=f_2 W$")
-                ax.set_yscale("log"); ax.set_xscale("log")
-                vb = vb_of.get((ch, wp))
-                ax.set_title(f"WP {wp}" + (f"  ·  {vb:g} V" if vb is not None else ""), fontsize=9)
-                ax.grid(True, which="both", alpha=0.3)
-                ax.tick_params(labelsize=7)
+                g1 = f1[:m] * W[:m]
+                g2 = f2[:m] * W[:m]
+                for key, func, _, _, _, lab1, lab2 in parts:
+                    ax = figs[key][1][i]
+                    y1, y2 = func(g1), func(g2)
+                    ax.plot(freq, y1, lw=1.0, color="#1f77b4", label=lab1, alpha=0.9)
+                    ax.plot(freq, y2, lw=1.0, color="#d62728", label=lab2, alpha=0.7)
+                    ax.set_xscale("log"); ax.set_yscale("log")
+                    ax.set_title(ttl, fontsize=9)
+                    ax.grid(True, which="both", alpha=0.3)
+                    ax.tick_params(labelsize=7)
+                    allv = np.concatenate([y1, y2]); pos = allv[allv > 0]   # min positivo per la scala log
+                    if pos.size:
+                        ylim[0] = min(ylim[0], float(pos.min())); ylim[1] = max(ylim[1], float(allv.max()))
         finally:
             if rf is not None:
                 rf.close()
-        for ax in axf[len(wps):]:
-            ax.axis("off")
-        axf[0].legend(fontsize=9, loc="upper right")
-        fig.suptitle(rf"Total filters $g_i = f_i \cdot W$ — Ch {ch}  ·  Measurement {MEAS_NAME}",
-                     fontsize=14, fontweight="bold")
-        fig.supxlabel("Frequency (Hz)", fontsize=11)
-        fig.supylabel(r"$|g_i(f)|$", fontsize=12)
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-        out_png = p(f"total_filters_ch{ch}_m205.png")
-        fig.savefig(out_png, dpi=180)
-        plt.close(fig)
+        from matplotlib.patches import Patch
+        lo_y = ylim[0] * 0.6 if np.isfinite(ylim[0]) else None       # margine sotto/sopra (scala log)
+        hi_y = ylim[1] * 1.7 if ylim[1] > 0 else None
+        for key, _, head, ylab, fname, lab1, lab2 in parts:
+            fig, axf = figs[key]
+            for ax in axf[len(wps):]:
+                ax.axis("off")
+            if lo_y and hi_y:                                        # STESSI limiti y su tutti i pannelli
+                for ax in axf[:len(wps)]:
+                    ax.set_ylim(lo_y, hi_y)
+            # legenda FUORI dai grafici, con rettangoli colorati (le righe sottili non si vedono).
+            # Il rosso scuro e' dove g1 (blu) e g2 (rosso) si sovrappongono.
+            handles = [Patch(color="#1f77b4", label=lab1),
+                       Patch(color="#d62728", label=lab2),
+                       Patch(color="#9f3f52", label=r"$g_1,\,g_2$ sovrapposti (rosso scuro)")]
+            fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.955),
+                       ncol=3, fontsize=10, frameon=True)
+            fig.suptitle(rf"Total filters {head} — Ch {ch}  ·  Measurement {MEAS_NAME}",
+                         fontsize=14, fontweight="bold", y=0.995)
+            fig.supxlabel("Frequency (Hz)", fontsize=11)
+            fig.supylabel(ylab, fontsize=12)
+            fig.tight_layout(rect=[0, 0, 1, 0.90])
+            out_png = p(f"{fname}_ch{ch}_m205.png")
+            fig.savefig(out_png, dpi=180)
+            plt.close(fig)
+            print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
         n_imgs += 1
-        print(f"  → {os.path.basename(out_png)}  ({len(wps)} WP)")
     if n_imgs == 0:
         print(f"[INFO] nessun filtro totale prodotto (mancano .npy/lambda/ROOT).")
 
@@ -568,6 +626,11 @@ def main():
 
     amap = read_amplitudes(AMP_CSV)
     merge_timing(rows, amap)
+
+    # R_bol (MOhm) dal txt delle load curves (Excel), unito per (canale, V_bias).
+    rbol_map = read_rbol(RBOL_TXT)
+    for r in rows:
+        r["R_bol"] = rbol_map.get((r["channel"], round(r["vbias"], 3)))
 
     # rho_t = SNR*beta. I CSV arricchiti (OF e Wiener) lo contengono gia' inline:
     # il CSV timing serve solo da fallback per le righe che non ce l'hanno.
@@ -618,8 +681,8 @@ def main():
         dict(xkey="SNR",           ykey="BI", xlabel="SNR",             ylabel="BI", title="BI vs SNR"),
         dict(xkey="signal_amp",    ykey="BI", xlabel="Amplitude (V)",   ylabel="BI", title="BI vs Amplitude"),
         dict(xkey="sigma_analytic",ykey="BI", xlabel=r"$\sigma$ (V)",   ylabel="BI", title="BI vs $\\sigma$ (noise)", logx=True),
-        # row 3: SNR/risetime, SNR*beta (timing FoM), HF-power
-        dict(xkey="SNR_over_risetime", ykey="BI", xlabel="SNR / Risetime",       ylabel="BI", title="BI vs SNR/Risetime"),
+        # row 3: R_bol, SNR*beta (timing FoM), HF-power
+        dict(xkey="R_bol",         ykey="BI", xlabel=r"$R_{bol}$ (M$\Omega$)",   ylabel="BI", title=r"BI vs $R_{bol}$", logx=True),
         dict(xkey="rho_t",         ykey="BI", xlabel=r"SNR·$\beta$ (Hz)",        ylabel="BI", title=r"BI vs SNR·$\beta$ (timing FoM)"),
         dict(xkey="hf_power",      ykey="BI", xlabel="AP HF-power ( >500 Hz )",  ylabel="BI", title="BI vs HF-power", logx=True),
     ]

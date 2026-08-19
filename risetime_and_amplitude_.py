@@ -19,6 +19,12 @@ Available modes (ANALYSIS_MODE):
                             histogram (same files handled by analyze_BI_singlerun.py).
                             Plots Risetime/Decaytime/HF-power vs Channel + overlaid
                             waveforms, exactly like AVERAGE_PULSES_BIN but from ROOT.
+  - "AVERAGE_PULSES_BIN_WP": Reads the m205 Argonauts average-pulse .bin files, ONE AP
+                            per channel taken at a given working point (WP). BOTH the
+                            channel and the WP are parsed from the filename
+                            ('m205_ch<ch>_combined_WP<wp>.bin_edmean.bin') and recorded,
+                            together with V_bias(WP). Plots Risetime/Decaytime/HF-power
+                            vs Channel + overlaid waveforms, like AVERAGE_PULSES_BIN.
 """
 
 import uproot
@@ -27,15 +33,19 @@ import os, glob, sys, re
 from array import array
 import csv
 
+# ROOT is only needed for the interactive plots (SHOW_PLOTS_* below). Import it
+# lazily: if it is unavailable, the analysis + CSV export still run; we only bail
+# out later if plotting was actually requested.
 try:
     import ROOT
     ROOT.gErrorIgnoreLevel = ROOT.kWarning   # suppress ROOT info messages
+    HAVE_ROOT = True
 except ImportError:
-    sys.exit("PyROOT is required to use interactive ROOT plots.")
+    HAVE_ROOT = False
 
 
 # ── User settings ──────────────────────────────────────────────────────────────
-ANALYSIS_MODE = "LOAD_CURVE"   # "LOAD_CURVE" | "AVERAGE_PULSES_BIN" | "AVERAGE_PULSES_ROOT"
+ANALYSIS_MODE = "AVERAGE_PULSES_BIN_WP"   # "LOAD_CURVE" | "AVERAGE_PULSES_BIN" | "AVERAGE_PULSES_ROOT" | "AVERAGE_PULSES_BIN_WP"
 BASE          = os.path.dirname(os.path.abspath(__file__))
 
 # ── Input/output locations (folders are relative to this script) ───────────────
@@ -46,11 +56,11 @@ LOAD_CURVE_RESULTS_DIR    = "m205_results_octopus"                 # folder to s
 AMP_CSV_NAME       = "amplitudes_m205.csv"            # output CSV (amplitudes)
 
 #   AVERAGE_PULSES_BIN — reads average-pulse .bin files
-BIN_DIR     = "NuoveAnalisiArgonauts_m204"                              # folder containing the .bin files
-BIN_PATTERN = "000204_20260405T115934_*_000.bin_edmean.bin"      # glob pattern of the files to read
-RT_CSV_NAME = "risetime_m204_argonauts.csv"                        # output CSV (risetimes)
+BIN_DIR     = "AnalisiArgonauts_m205"                              # folder containing the .bin files
+BIN_PATTERN = "000205_20260405T115934_*_000.bin_edmean.bin"      # glob pattern of the files to read
+RT_CSV_NAME = "risetime_m205_argonauts.csv"                        # output CSV (risetimes)
 # Regex (with ONE capture group = channel number) to pull the channel from the
-# filename. Argonauts m204: '..._031_000.bin_edmean.bin' -> 31.
+# filename. Argonauts m205: '..._031_000.bin_edmean.bin' -> 31.
 # For the old m202 files use instead:  r"m202_ch(\d+)_combined".
 BIN_CH_REGEX = r"_(\d+)_000\.bin_edmean\.bin$"
 
@@ -61,6 +71,19 @@ AP_ROOT_DIR      = "Processed/m204_AP"                 # folder with the .root f
 AP_ROOT_PATTERN  = "Processed_*_000204_*_new.root"     # glob pattern of the files to read
 AP_ROOT_HIST     = "averagepulse_ap_medianAP"          # histogram name inside each file
 AP_ROOT_CSV_NAME = "risetime_m204_octopus.csv"         # output CSV (risetimes)
+
+# ── AVERAGE_PULSES_BIN_WP settings (m205 Argonauts, one AP per channel@WP) ─────────
+#   Like AVERAGE_PULSES_BIN, but the filename carries BOTH the channel and the WP,
+#   e.g. 'm205_ch31_combined_WP19.bin_edmean.bin' -> channel 31, wp 19. m205 is
+#   sampled at 10 kHz (window 10000 -> 1 s, dt = 0.1 ms).
+BINWP_DIR     = "AnalisiArgonauts_m205"                        # folder with the .bin files
+BINWP_PATTERN = "m205_ch*_combined_WP*.bin_edmean.bin"         # glob pattern of the files
+BINWP_CSV_NAME = "risetime_m205_argonauts_wp.csv"             # output CSV (risetimes)
+# Regex with TWO capture groups = (channel, wp).
+BINWP_REGEX = r"_ch(\d+)_combined_WP(\d+)\.bin_edmean\.bin$"
+BINWP_SAMPLING_FREQUENCY_HZ = 10000                            # m205 acquisition sampling rate
+BINWP_SAMPLING_PERIOD_S = 1 / BINWP_SAMPLING_FREQUENCY_HZ
+SHOW_PLOTS_BIN_WP = False                                      # enable/disable interactive plots
 
 # ── LOAD_CURVE settings ──────────────────────────────────────────────────────────
 TARGET_CH    = "71"   # channel whose average pulse is drawn (single-pulse canvas)
@@ -299,6 +322,28 @@ def export_risetime_csv(out_path):
     print(f"✓ Data (incl. decaytime & HF-power) saved to: {out_path}")
 
 
+def export_risetime_wp_csv(out_path):
+    """Write AVERAGE_PULSES_BIN_WP results to CSV (Channel, WP, V_bias, Risetime,
+    Decaytime, HF-power) — one row per channel@WP average pulse."""
+    with open(out_path, "w", newline="") as fcsv:
+        writer = csv.writer(fcsv)
+        writer.writerow(["channel", "wp", "vbias_V", "risetime_ms", "decaytime_ms", "hf_power"])
+        for ch in sorted(set(plot_data_risetime) | set(plot_data_decaytime) | set(plot_data_hfpower), key=int):
+            wp  = plot_data_wp.get(ch)
+            rt  = plot_data_risetime.get(ch, np.nan)
+            dec = plot_data_decaytime.get(ch, np.nan)
+            hf  = plot_data_hfpower.get(ch, np.nan)
+
+            wp_str  = f"{wp}"                if wp is not None    else ""
+            vb_str  = f"{wp_to_vbias(wp):.3f}" if wp is not None  else ""
+            rt_str  = f"{rt:.6f}"  if not np.isnan(rt)  else ""
+            dec_str = f"{dec:.6f}" if not np.isnan(dec) else ""
+            hf_str  = f"{hf:.6e}"  if not np.isnan(hf)  else ""
+
+            writer.writerow([int(ch), wp_str, vb_str, rt_str, dec_str, hf_str])
+    print(f"✓ Data (incl. WP, V_bias, decaytime & HF-power) saved to: {out_path}")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 – DATA LOADING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -308,6 +353,7 @@ plot_data_decaytime  = {}
 plot_data_amplitude  = {}
 plot_data_hfpower    = {}
 plot_data_pulses     = {}
+plot_data_wp         = {}   # {channel_int: wp_int}  (AVERAGE_PULSES_BIN_WP only)
 
 target_pulse_t = None
 target_pulse_v = None
@@ -448,6 +494,42 @@ elif ANALYSIS_MODE == "AVERAGE_PULSES_ROOT":
         hf_str  = f"{hf_val:.3e}" if not np.isnan(hf_val) else "N/A"
         print(f"[ok] Channel {channel:<3} | RT: {rt_str:>10} | DT: {dec_str:>10} | HF: {hf_str:>12}")
 
+elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN_WP":
+    bin_dir  = os.path.join(BASE, BINWP_DIR)
+    bin_glob = os.path.join(bin_dir, BINWP_PATTERN)
+    FILES    = sorted(glob.glob(bin_glob))
+
+    if not FILES: sys.exit(f"No .bin file found in {bin_dir} with pattern {BINWP_PATTERN}")
+
+    print(f"Analyzing {len(FILES)} m205 Argonauts Average Pulse binary files...\n")
+
+    for filepath in FILES:
+        match = re.search(BINWP_REGEX, os.path.basename(filepath))
+        if not match:
+            print(f"  [warn] cannot parse channel/WP from {os.path.basename(filepath)} - skipped")
+            continue
+        channel = match.group(1); ch_int = int(channel)
+        wp_int  = int(match.group(2))
+
+        meanpulse = np.fromfile(filepath)
+        t_s = np.arange(len(meanpulse)) * BINWP_SAMPLING_PERIOD_S
+
+        rt_ms  = risetime_cubic(meanpulse, t_s)
+        dec_ms = decaytime_cubic(meanpulse, t_s)
+        hf_val = hf_power(meanpulse, t_s)
+
+        plot_data_pulses[ch_int] = (t_s, meanpulse)
+        plot_data_wp[ch_int]     = wp_int
+        if not np.isnan(rt_ms):  plot_data_risetime[ch_int]  = rt_ms
+        if not np.isnan(dec_ms): plot_data_decaytime[ch_int] = dec_ms
+        if not np.isnan(hf_val): plot_data_hfpower[ch_int]   = hf_val
+
+        rt_str  = f"{rt_ms:.4f} ms" if not np.isnan(rt_ms) else "N/A"
+        dec_str = f"{dec_ms:.4f} ms" if not np.isnan(dec_ms) else "N/A"
+        hf_str  = f"{hf_val:.3e}" if not np.isnan(hf_val) else "N/A"
+        print(f"✓ Channel {channel:<3} WP{wp_int:<2} (V_bias {wp_to_vbias(wp_int):>4}) | "
+              f"RT: {rt_str:>10} | DT: {dec_str:>10} | HF: {hf_str:>12}")
+
 print("-" * 65)
 if ANALYSIS_MODE == "LOAD_CURVE":
     results_dir = os.path.join(BASE, LOAD_CURVE_RESULTS_DIR)
@@ -457,6 +539,8 @@ elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN":
     export_risetime_csv(os.path.join(BASE + "/" + BIN_DIR, RT_CSV_NAME))
 elif ANALYSIS_MODE == "AVERAGE_PULSES_ROOT":
     export_risetime_csv(os.path.join(BASE, AP_ROOT_DIR, AP_ROOT_CSV_NAME))
+elif ANALYSIS_MODE == "AVERAGE_PULSES_BIN_WP":
+    export_risetime_wp_csv(os.path.join(BASE, BINWP_DIR, BINWP_CSV_NAME))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 – INTERACTIVE ROOT PLOTS
@@ -467,7 +551,16 @@ SHOW_PLOTS = {
     "LOAD_CURVE":          SHOW_PLOTS_LOAD_CURVE,
     "AVERAGE_PULSES_BIN":  SHOW_PLOTS_BIN,
     "AVERAGE_PULSES_ROOT": SHOW_PLOTS_AP_ROOT,
+    "AVERAGE_PULSES_BIN_WP": SHOW_PLOTS_BIN_WP,
 }.get(ANALYSIS_MODE, False)
+
+# Everything below touches ROOT. If plotting is off, we are done (the analysis and
+# CSV export above need no ROOT). If plotting is on but ROOT is missing, bail out.
+if not SHOW_PLOTS:
+    print("\nPlotting disabled for this mode — done.\n")
+    sys.exit(0)
+if not HAVE_ROOT:
+    sys.exit("PyROOT is required for the interactive plots (SHOW_PLOTS=True) but is unavailable.")
 
 app = ROOT.gROOT.GetApplication()
 if not app: app = ROOT.TApplication("app", sys.argv, sys.argv)
@@ -542,14 +635,14 @@ if ANALYSIS_MODE == "LOAD_CURVE" and SHOW_PLOTS:
         c_p.cd(); gr_p.Draw("AL")
         canvases.append(c_p); graphs.append(gr_p); c_p.Update()
 
-elif ANALYSIS_MODE in ("AVERAGE_PULSES_BIN", "AVERAGE_PULSES_ROOT") and SHOW_PLOTS:
+elif ANALYSIS_MODE in ("AVERAGE_PULSES_BIN", "AVERAGE_PULSES_ROOT", "AVERAGE_PULSES_BIN_WP") and SHOW_PLOTS:
     c_rt, gr_rt   = _make_channel_graph("c_rt_single", "Risetime vs Channel", plot_data_risetime, "Risetime (ms)")
     c_dec, gr_dec = _make_channel_graph("c_dec_single", "Decaytime vs Channel", plot_data_decaytime, "Decaytime (ms)")
     c_hf, gr_hf   = _make_channel_graph("c_hf_single", "AP HF-power vs Channel", plot_data_hfpower, "HF-power ( >500 Hz )")
     canvases.extend([c_rt, c_dec, c_hf]); graphs.extend([gr_rt, gr_dec, gr_hf])
 
     if plot_data_pulses:
-        _src = ".bin" if ANALYSIS_MODE == "AVERAGE_PULSES_BIN" else "ROOT"
+        _src = "ROOT" if ANALYSIS_MODE == "AVERAGE_PULSES_ROOT" else ".bin"
         c_p = ROOT.TCanvas("c_pulses_all", f"All average pulses ({_src})", 1000, 700)
         c_p.SetGrid()
         mg_p = ROOT.TMultiGraph()
@@ -557,17 +650,16 @@ elif ANALYSIS_MODE in ("AVERAGE_PULSES_BIN", "AVERAGE_PULSES_ROOT") and SHOW_PLO
         leg_p = ROOT.TLegend(0.75, 0.65, 0.88, 0.88)
 
         for idx, (ch, (t_s, pulse)) in enumerate(sorted(plot_data_pulses.items(), key=lambda x: int(x[0]))):
+            wp    = plot_data_wp.get(ch)
+            label = f"Ch {ch} WP{wp}" if wp is not None else f"Ch {ch}"
             gr = ROOT.TGraph(len(t_s), array('d', t_s), array('d', pulse))
-            gr.SetTitle(f"Ch {ch}")
+            gr.SetTitle(label)
             gr.SetLineColor(COLORS[idx % len(COLORS)]); gr.SetLineWidth(2)
-            mg_p.Add(gr, "L"); leg_p.AddEntry(gr, f"Ch {ch}", "l")
+            mg_p.Add(gr, "L"); leg_p.AddEntry(gr, label, "l")
             graphs.append(gr)
 
         c_p.cd(); mg_p.Draw("A"); leg_p.Draw(); c_p.Update()
         canvases.append(c_p); keepalive.extend([mg_p, leg_p])
 
-if SHOW_PLOTS:
-    print("\n" + "=" * 65 + "\n  Interactive ROOT plots ready.\n  Close a canvas window or press Ctrl+C to exit.\n" + "=" * 65 + "\n")
-    app.Run()
-else:
-    print("\nPlotting disabled for this mode — done.\n")
+print("\n" + "=" * 65 + "\n  Interactive ROOT plots ready.\n  Close a canvas window or press Ctrl+C to exit.\n" + "=" * 65 + "\n")
+app.Run()

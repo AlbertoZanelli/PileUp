@@ -726,9 +726,50 @@ def compute_W_torch(S, nps, lam):
     return W * dc_mask
 
 
+def reliability_R(S, nps, N_events, beta=2.0, eps_frac=1e-12):
+    """
+    Per-bin template reliability R(f) (estimator A) for the finite-N template noise.
+
+    The template is the median/mean of ``N_events`` pulses, so its spectrum carries a
+    residual noise floor ``NPS / N``. R(f) is a soft SNR gate on that floor:
+
+        S_above = max( |S|^2_n - beta * NPS_n / N , 0 )
+        R       = S_above / ( S_above + beta * NPS_n / N + eps )
+
+    R ~ 1 where the signal clearly beats the template noise floor, R ~ 0 where the bin
+    is only residual noise; R = 0.5 at template SNR (in power) rho = 2*beta.
+
+    The spectra are the SAME equal-power-normalized ones used by :func:`compute_W_torch`
+    (``|S|^2_n = |S|^2/a``, ``NPS_n = NPS*a/b^2``), so |S|^2 and NPS are comparable and
+    R is INVARIANT to a constant rescaling of ``nps`` (exactly like W).
+
+    Args:
+        S (torch.Tensor): FFT of the (windowed) mean pulse (complex, full spectrum).
+        nps (torch.Tensor): Noise power spectrum (real, full spectrum).
+        N_events (int): Number of pulses averaged into the template.
+        beta (float, optional): Reliability threshold (R=0.5 at rho=2*beta). Defaults to 2.0.
+        eps_frac (float, optional): Guard against 0/0 in bins where both the signal and
+            the template noise floor vanish, as a fraction of max(|S|^2_n). Must stay well
+            below the smallest ``beta*NPS_n/N``, otherwise it acts as a second, unwanted
+            gate. Defaults to 1e-12 (m205: threshold min ~1e-7 of that scale).
+
+    Returns:
+        torch.Tensor: Real tensor R in [0, 1), same length as S (Hermitian-symmetric,
+        so ``R * W`` keeps the filtered pulse real).
+    """
+    AvgPS = S.abs() ** 2
+    a = torch.sum(torch.sqrt(AvgPS))
+    b = torch.sum(torch.sqrt(nps))
+    AvgPS_n = AvgPS / a
+    thr = beta * nps * (a / b ** 2) / float(N_events)      # beta * NPS_n / N
+    S_above = torch.clamp(AvgPS_n - thr, min=0.0)
+    return S_above / (S_above + thr + eps_frac * AvgPS_n.max())
+
+
 def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distribution, N_sigma=1.28,
                                    n_trials=500, activation_fct=None, pulse_center_ratio=0.5,
                                    f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
+                                   use_R=False, N_events=None, beta_R=2.0, eps_R=1e-12,
                                    verbose=True, use_interp=False):
     """
     Wiener filter optimization with a trainable noise-modulation factor lambda.
@@ -759,6 +800,14 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             norm_type=0 Wiener filter).
         lr_lambda (float or None, optional): Learning rate for log-lambda. Defaults
             to the filter learning rate (1e-2).
+        use_R (bool, optional): If True, multiply the Wiener kernel ONCE by the template
+            reliability R(f) (:func:`reliability_R`), i.e. W <- R*W, to stop the band
+            filters from overtraining on the finite-N template noise. Defaults to False
+            (identical to the un-regularized behavior).
+        N_events (int or None, optional): Number of pulses averaged into the template
+            (required when ``use_R``).
+        beta_R (float, optional): Reliability threshold of R(f). Defaults to 2.0.
+        eps_R (float, optional): 0/0 guard of R(f), fraction of max(|S|^2_n). Defaults to 1e-12.
         verbose (bool, optional): Whether to print progress. Defaults to True.
         use_interp (bool, optional): Whether to interpolate the peak. Defaults to False.
 
@@ -775,6 +824,16 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     if not torch.is_tensor(nps):
         nps = torch.as_tensor(nps, device=S.device)
     nps = nps.to(device=S.device, dtype=torch.float32)
+
+    # Template reliability R(f): does not depend on lambda -> computed once, folded
+    # into the kernel ONCE (W <- R*W); never applied a second time downstream.
+    if use_R and N_events is None:
+        raise ValueError("use_R=True requires N_events (number of averaged pulses)")
+    R_rel = reliability_R(S, nps, N_events, beta_R, eps_R) if use_R else None
+
+    def kernel(lam):
+        W = compute_W_torch(S, nps, lam)
+        return W if R_rel is None else R_rel * W
 
     # Delay phases do not depend on W: precompute once (cf. precompute_constants).
     exp_term = torch.exp(-1j * w[None, :] * t[:, None])  # (len(t), len(w))
@@ -804,7 +863,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
         optimizer.zero_grad()
         lam = torch.exp(log_lambda)
         # Rebuild the Wiener kernel and its derived spectra for the current lambda.
-        W_unit = compute_W_torch(S, nps, lam)
+        W_unit = kernel(lam)
         S_H = S * W_unit
         S_H_delayed = S_H[None, :] * exp_term
         S2_over_nps = (S.abs() ** 2) / nps  # unused by the Wiener sigma, kept for signature
@@ -833,7 +892,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     print(f"Final: J = {J.item():.6f}  lambda = {lam.item():.4f}")
     f1 = f1.detach()
     f2 = f2.detach()
-    W_unit = compute_W_torch(S, nps, lam).detach()
+    W_unit = kernel(lam).detach()
     return f1, f2, lam.item(), W_unit, J_values, lambda_values
 
 
