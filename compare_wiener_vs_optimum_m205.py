@@ -85,8 +85,8 @@ MEAS_NAME = "000205"
 #   ""             -> filtro ottimo         (cartella m205_results_octopus)
 #   "_wiener"      -> Wiener lambda scalare  (cartella m205_results_wiener)
 #   "_wiener_freq" -> Wiener lambda(f)       (cartella m205_results_wiener_freq)
-SUFFIX_A = ""
-SUFFIX_B = "_wiener"
+SUFFIX_A = "_wiener"        # riferimento: Wiener su medianAP del ROOT
+SUFFIX_B = "_wiener_fit"    # confronto:   Wiener su template FITTATO
 
 # Modalità "bad channels": se True confronta i 4 canali normalmente scartati
 # (37, 40, 41, 94) invece dei 5 buoni; ai file viene aggiunto "_bad" nel nome e i
@@ -95,13 +95,16 @@ BAD_CHANNELS = False
 
 # Canali da escludere IN AGGIUNTA a quelli della modalità (es. [91] per lasciare
 # fuori il canale anomalo).
-EXTRA_EXCLUDE = []
+EXTRA_EXCLUDE = [31, 34, 71, 83]   # lo scan dei fit ha girato solo sul canale 91
 
 # Etichette (per titoli e legende, in inglese) e sigle (per il tag del confronto)
 # dei set di risultati, indicizzate dal suffisso.
 SET_LABELS = {"": "Optimum filter", "_wiener": "Wiener (scalar λ)",
-              "_wiener_freq": "Wiener (λ(f))"}
-SET_CODES  = {"": "OF", "_wiener": "WF", "_wiener_freq": "WFfreq"}
+              "_wiener_freq": "Wiener (λ(f))",
+              "_wiener_fit": "Wiener on fitted template",     # analysis_BI_..._regolarized, TEMPLATE_SOURCE="fit"
+              "_wiener_root_R": "Wiener + R(f), β=2"}         # idem, TEMPLATE_SOURCE="root" + USE_R
+SET_CODES  = {"": "OF", "_wiener": "WF", "_wiener_freq": "WFfreq",
+              "_wiener_fit": "WFfit", "_wiener_root_R": "WFrootR"}
 
 
 def _bi_csv(suffix: str) -> str:
