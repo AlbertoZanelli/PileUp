@@ -91,7 +91,7 @@ SUFFIX_B = "_wiener"
 # Modalità "bad channels": se True confronta i 4 canali normalmente scartati
 # (37, 40, 41, 94) invece dei 5 buoni; ai file viene aggiunto "_bad" nel nome e i
 # canali usano una palette diversa, per non confondere le due modalità.
-BAD_CHANNELS = True
+BAD_CHANNELS = False
 
 # Canali da escludere IN AGGIUNTA a quelli della modalità (es. [91] per lasciare
 # fuori il canale anomalo).
