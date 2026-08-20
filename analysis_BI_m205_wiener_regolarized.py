@@ -1,7 +1,23 @@
 """
 analysis_BI_m205_wiener_regolarized.py
 ======================================
-Come analyse_BI_m205_wiener.py, ma con la REGOLARIZZAZIONE R(f) sul template
+Come analyse_BI_m205_wiener.py, ma con DUE aggiunte, entrambe controllate dalla config in
+testa (TEMPLATE_SOURCE, USE_R):
+
+  A) TEMPLATE_SOURCE = "fit"  + USE_R = False
+     Il template e' l'impulso FITTATO migliore prodotto da scan_residuals_bessel_m205.py
+     (residual_scan_bessel/bestfit_ch<ch>_wp<wp>.npy). Il fit e' gia' un template denoised:
+     poche decine di parametri su 10000 punti mediano via il rumore finito-N, quindi la
+     regolarizzazione R non serve.
+
+  B) TEMPLATE_SOURCE = "root" + USE_R = True
+     Il template e' il medianAP di Octopus dal ROOT e la REGOLARIZZAZIONE R(f) e' attiva.
+
+Le due modalita' scrivono in cartelle e CSV distinti (m205_results_wiener_fit /
+m205_results_wiener_root_R) e usano prefissi di job diversi, quindi si possono lanciare una
+dopo l'altra senza sovrascriversi.
+
+Sulla REGOLARIZZAZIONE R(f) sul template
 (affidabilita' per bin, estimatore A) attiva nel training:
 
     S_above = max( |S|^2_n - beta*NPS_n/N , 0 )
@@ -86,10 +102,33 @@ import uproot        # serve all'orchestratore per elencare i WP
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
-OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_wiener_reg")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MODALITA': da dove viene il TEMPLATE e se si usa la regolarizzazione R(f)
+# ═════════════════════════════════════════════════════════════════════════════
+# TEMPLATE_SOURCE = "fit"  -> impulso FITTATO migliore di scan_residuals_bessel_m205.py
+#   (residual_scan_bessel/bestfit_ch<ch>_wp<wp>.npy). Il fit e' gia' un template DENOISED
+#   (pochi parametri su 10000 punti mediano via il rumore finito-N), quindi qui R NON serve:
+#   USE_R = False. NB: quel fit e' costruito sull'AP allineato al MASSIMO, quindi ha il picco
+#   al campione 5000 invece che ~5009; per il BI e' irrilevante (W = S*/(...) ha fase nulla,
+#   l'impulso filtrato viene comunque ricentrato su pulse_center_ratio).
+# TEMPLATE_SOURCE = "root" -> medianAP di Octopus dal file ROOT (comportamento originale),
+#   da usare CON la regolarizzazione: USE_R = True.
+#
+# La NPS viene SEMPRE dal ROOT (averagepowerspectrum_noise_wp<wp>_medianpower): cambia solo
+# il template. Cartelle di output e prefisso dei job dipendono dalla modalita', cosi' le due
+# analisi non si sovrascrivono a vicenda.
+TEMPLATE_SOURCE = "fit"      # "fit" | "root"
+USE_R           = False      # True solo con "root" (vedi sopra)
+
+FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel")
+FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
+
+_TAG        = TEMPLATE_SOURCE + ("_R" if USE_R else "")
+OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
-OUTPUT_CSV  = os.path.join(OUTPUT_DIR, "BI_results_m205_wiener_reg.csv")
+OUTPUT_CSV  = os.path.join(OUTPUT_DIR, f"BI_results_m205_wiener_{_TAG}.csv")
 # Cartella coi filtri di banda ADDESTRATI f1, f2, salvati come vettori .npy (uno
 # per coppia canale/WP, nomi distinti -> nessun problema di concorrenza). Si salva
 # solo la META' INDIPENDENTE dello spettro (i primi N//2+1 bin, 0..Nyquist); il
@@ -111,7 +150,7 @@ WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
-JOB_NAME_PREFIX   = "BIWR"     # usato per nominare i job e per il throttling via qstat
+JOB_NAME_PREFIX   = "BIW" + ("F" if TEMPLATE_SOURCE == "fit" else "R")   # nome job / throttling qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
 RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
@@ -189,10 +228,13 @@ SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
 N_TRIALS = 800
 
-# ── Regolarizzazione R(f) del template (estimatore A)
+# ── Regolarizzazione R(f) del template (estimatore A) - attiva solo se USE_R
 #   N (impulsi mediati nel template) NON e' fissato: si ricava per ogni (canale, WP)
 #   dalle entries della TH2D averagepulse_ap_wp<wp>_APdistro (vedi n_events_from_distro).
 BETA_R = 2.0       # soglia di affidabilita': R=0.5 a SNR (in potenza) del template = 2*BETA_R
+                   # Uguale per tutti i WP: non c'e' un modo diretto di calcolarlo per WP, e
+                   # sceglierlo minimizzando J e' autolesionista (il regolarizzatore collassa
+                   # a beta->0). Il selettore onesto sarebbe il cross-fit sui singoli impulsi.
 EPS_R  = 1e-12     # solo guardia contro 0/0, frazione di max(|S|^2_n): deve restare molto
                    # sotto il minimo di beta*NPS_n/N (~1e-7 su m205), altrimenti fa da
                    # secondo gate indesiderato (a 1e-6 sposta R fino a 0.4 in alta frequenza)
@@ -205,7 +247,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #   rho_t         = SNR * beta  = figura di merito temporale per il pile-up (Hz)
 #   lambda_wiener = fattore di modulazione del rumore del Wiener, ottimizzato
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "lambda_wiener", "beta_R", "n_events", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "lambda_wiener", "template", "use_R", "beta_R", "n_events", "BI", "J_final"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -324,7 +366,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             f1_init = None,
             f2_init = None,
             lambda_init = 1.0,
-            use_R = True, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
+            use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
             n_trials = N_TRIALS,
             use_interp = True,
             verbose = False,
@@ -342,7 +384,9 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "beta_Hz": beta_Hz,
         "rho_t": rho_t,
         "lambda_wiener": float(lam_opt),
-        "beta_R": BETA_R,
+        "template": TEMPLATE_SOURCE,
+        "use_R": int(USE_R),
+        "beta_R": BETA_R if USE_R else "",
         "n_events": n_events,
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
@@ -378,9 +422,18 @@ def run_worker(channel: int, wp: int):
         shared = build_shared(device)
 
         # 3. Estrazione Meanpulse + NPS
+        #    Il template viene dal fit oppure dall'AP di Octopus (TEMPLATE_SOURCE); la NPS
+        #    e il numero di impulsi mediati vengono comunque dal ROOT.
         with uproot.open(filepath) as f:
-            hist_pulse = f[f"averagepulse_ap_wp{wp}_medianAP"]
-            meanpulse = np.asarray(hist_pulse.values(), dtype=float)
+            if TEMPLATE_SOURCE == "fit":
+                fit_path = os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
+                if not os.path.exists(fit_path):
+                    raise RuntimeError(f"fit non trovato: {fit_path} "
+                                       f"(gira scan_residuals_bessel_m205.py --plot)")
+                meanpulse = np.asarray(np.load(fit_path), dtype=float)
+            else:
+                meanpulse = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), dtype=float)
+            meanpulse = meanpulse / meanpulse.max()        # picco = 1 in entrambi i casi
 
             # N impulsi nel template: entries della TH2D / campioni per impulso
             n_events = n_events_from_distro(f[f"averagepulse_ap_wp{wp}_APdistro"])
@@ -508,6 +561,18 @@ def run_orchestrator():
         for wp in wp_indices:
             if (ch, round(float(wp_to_vbias(wp)), 3)) in amps:
                 tasks.append((ch, wp))
+
+    # In modalita' "fit" servono i bestfit_ch<ch>_wp<wp>.npy dello scan: le coppie che non li
+    # hanno vengono SALTATE invece di generare job destinati a fallire (lo scan puo' aver girato
+    # solo su alcuni canali).
+    if TEMPLATE_SOURCE == "fit":
+        have = [(ch, wp) for (ch, wp) in tasks
+                if os.path.exists(os.path.join(FIT_DIR, FIT_PATTERN.format(ch=ch, wp=wp)))]
+        if len(have) < len(tasks):
+            missing_ch = sorted({ch for (ch, wp) in tasks} - {ch for (ch, wp) in have})
+            print(f"[INFO] TEMPLATE_SOURCE='fit': saltate {len(tasks)-len(have)} coppie senza fit "
+                  f"in {FIT_DIR} (canali senza fit: {missing_ch})")
+        tasks = have
 
     print(f"Task totali (canale, WP) da elaborare: {len(tasks)}")
     if not tasks:
