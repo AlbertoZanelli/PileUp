@@ -121,7 +121,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 TEMPLATE_SOURCE = "fit"      # "fit" | "root"
 USE_R           = False      # True solo con "root" (vedi sopra)
 
-FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel")
+FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 
 _TAG        = TEMPLATE_SOURCE + ("_R" if USE_R else "")

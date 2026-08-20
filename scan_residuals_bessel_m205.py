@@ -23,7 +23,9 @@ test/fit_one_pulse_m205.py:
      covarianza (J^T J)^-1 e NUMERO DI CONDIZIONE (segnala i parametri non identificabili).
   7. NIENTE coppie complesse coniugate: solo poli reali (le CC non convergevano).
 
-Modelli fittati (MODELS in config): 3p z1, 6p z2, 7p z3, 9p z4 - il piu' grande e' 9p z4.
+Config: CHANNELS (uno o piu' canali), AP_SOURCE ("root" = medianAP di Octopus, errori
+dall'APdistro con floor sull'RMS di baseline; "maxalign" = AP allineato al massimo dai .npy,
+errori per bootstrap dai singoli impulsi) e MODELS (lista di modelli da fittare).
 
 Flusso (come gli altri programmi del progetto):
   1. Orchestratore (default): enumera (WP x modello) e sottomette un job per fit, poi termina.
@@ -61,18 +63,43 @@ import scan_residuals_m205 as sc   # riuso SOLO la meccanica del cluster (qsub, 
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
-OUTDIR    = os.path.join(BASE_DIR, "residual_scan_bessel")
+SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
+
+CHANNELS = [91, 34]        # uno o piu' canali: i file di output hanno il canale nel nome
+DATA_DIR = os.path.join(BASE_DIR, "Processed")
+MEAS_NAME = "000205"
+
+# ── Da dove viene l'AP da fittare, e di conseguenza come si stimano gli errori:
+# AP_SOURCE = "root"     -> medianAP di Octopus dal ROOT (disponibile per TUTTI i canali).
+#   Errore per time-bin dalla TH2D averagepulse_ap_wp<wp>_APdistro, con FLOOR pari all'RMS di
+#   baseline dell'AP. Il floor non e' un tappo arbitrario: l'APdistro ha bin di ampiezza 0.006,
+#   sette volte piu' larghi del rumore, quindi nelle zone quiete tutti gli impulsi cadono nello
+#   stesso bin e la sua dispersione e' ESATTAMENTE ZERO; l'RMS del pretrigger dell'AP e' invece
+#   proprio l'errore della mediana li'. Verificato sul ch91 WP15 contro il bootstrap dai veri
+#   impulsi: floor 1.73e-4 vs 1.88e-4 (-8%), fronte 1.28e-3 vs 1.40e-3 (-9%).
+# AP_SOURCE = "octopus"  -> AP ricostruito come MEDIANA dei singoli impulsi COSI' COME SONO
+#   salvati da extract_AP_pulses_m205.py, cioe' allineati alla MEZZA SALITA esattamente come fa
+#   Octopus (triggerdelay.midsample -> pretrigger). L'AP che ne esce e' IDENTICO al medianAP del
+#   ROOT (verificato: differenza 0.0 su tutti i WP), ma qui arrivano anche gli errori veri per
+#   time-bin, dal BOOTSTRAP degli stessi impulsi. E' la modalita' da preferire: stesso dato del
+#   ROOT, errori non binnati. Richiede i .npy degli impulsi, cioe' il file .bin del canale.
+# AP_SOURCE = "maxalign" -> come "octopus" ma con gli impulsi RIALLINEATI AL MASSIMO prima della
+#   mediana (build_medianAP_maxalign_m205.align_on_max): AP diverso da quello del ROOT.
+AP_SOURCE = "octopus"
+
+# Le cartelle di output PORTANO L'AP_SOURCE nel nome: fit fatti su template diversi non si
+# sovrascrivono a vicenda (l'orchestratore azzera FITS_DIR a ogni lancio).
+OUTDIR    = os.path.join(SCAN_DIR, "fits_" + AP_SOURCE)
 FITS_DIR  = os.path.join(OUTDIR, "_fits")
 LOG_DIR   = os.path.join(OUTDIR, "logs")
 JOBS_DIR  = os.path.join(OUTDIR, "jobs")
 
-CHANNEL = 91
-AP_PATTERN    = "medianAP_maxalign_ch{ch}_wp{wp}.npy"     # AP allineato al massimo
-PULSE_PATTERN = "pulses_ch{ch}_wp{wp}.npy"                # impulsi che lo formano (per gli errori)
+AP_PATTERN    = "medianAP_maxalign_ch{ch}_wp{wp}.npy"     # AP allineato al massimo (maxalign)
+PULSE_PATTERN = "pulses_ch{ch}_wp{wp}.npy"                # impulsi che lo formano (maxalign)
 SAMPLING_RATE = 10_000                                    # Hz, per l'asse dei tempi
 
-# ── I 4 modelli: (n_poli_reali, n_zeri). Niente coppie CC. Il piu' grande e' 9p z4.
-MODELS = [(3, 1), (6, 2), (7, 3), (9, 4)]
+# ── Modelli da fittare: (n_poli_reali, n_zeri). Niente coppie CC.
+MODELS = [(9, 4)]
 
 BESSEL_ORDER = 6         # FISSO
 FCUT         = 2500      # Hz, FISSO
@@ -109,57 +136,119 @@ def label(n_real, nzer):
     return f"{n_real}p z{nzer}"
 
 
-def combo_npz(wp, n_real, nzer):
-    return os.path.join(FITS_DIR, f"scan_ch{CHANNEL}_wp{wp}_{n_real}p_z{nzer}.npz")
+def pulse_path(ch, wp):
+    """Percorso dei singoli impulsi. Si accetta sia PULSE_DIR/pulses_ch<ch>_wp<wp>.npy sia
+    PULSE_DIR/ch<ch>/pulses_ch<ch>_wp<wp>.npy (i canali scaricati dal server arrivano in una
+    sottocartella per canale)."""
+    name = PULSE_PATTERN.format(ch=ch, wp=wp)
+    flat = os.path.join(PULSE_DIR, name)
+    return flat if os.path.exists(flat) else os.path.join(PULSE_DIR, f"ch{ch}", name)
 
 
-def list_wps():
-    """WP disponibili: quelli per cui esiste il .npy dell'AP max-aligned."""
-    pat = AP_PATTERN.format(ch=CHANNEL, wp="*")
-    wps = [int(m.group(1)) for f in glob.glob(os.path.join(PULSE_DIR, pat))
-           for m in [re.search(r"_wp(\d+)\.npy$", f)] if m]
-    return sorted(wps)
+def combo_npz(ch, wp, n_real, nzer):
+    return os.path.join(FITS_DIR, f"scan_ch{ch}_wp{wp}_{n_real}p_z{nzer}.npz")
+
+
+def root_file(ch):
+    fs = glob.glob(os.path.join(DATA_DIR, f"Processed_*_{MEAS_NAME}_{ch}.root"))
+    if not fs:
+        raise RuntimeError(f"ROOT del canale {ch} non trovato in {DATA_DIR}")
+    return fs[0]
+
+
+def list_wps(ch):
+    """WP dispari disponibili per il canale: dalle chiavi del ROOT ("root") oppure dai .npy
+    dell'AP max-aligned ("maxalign")."""
+    if AP_SOURCE == "root":
+        import uproot
+        with uproot.open(root_file(ch)) as f:
+            keys = [m.group(1) for k in f.keys()
+                    for m in [re.search(r"averagepulse_ap_wp(\d+)_medianAP", k)] if m]
+        return sorted({int(w) for w in keys if int(w) % 2})
+    pat = PULSE_PATTERN.format(ch=ch, wp="*")          # servono i singoli impulsi
+    files = glob.glob(os.path.join(PULSE_DIR, pat)) + glob.glob(os.path.join(PULSE_DIR, f"ch{ch}", pat))
+    return sorted({int(m.group(1)) for f in files
+                   for m in [re.search(r"_wp(\d+)\.npy$", f)] if m})
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DATO + ERRORI
 # ═════════════════════════════════════════════════════════════════════════════
-def load_ap(wp):
-    """AP allineato al massimo, peak-normalizzato, con l'asse dei tempi (centri dei bin)."""
-    path = os.path.join(PULSE_DIR, AP_PATTERN.format(ch=CHANNEL, wp=wp))
+def load_pulses(ch, wp):
+    """I singoli impulsi che formano l'AP (extract_AP_pulses_m205.py). Con AP_SOURCE="octopus"
+    restano come sono, cioe' allineati alla mezza salita come fa Octopus; con "maxalign" vengono
+    riallineati al massimo."""
+    path = pulse_path(ch, wp)
     if not os.path.exists(path):
-        raise RuntimeError(f"AP non trovato: {path}  (gira build_medianAP_maxalign_m205.py)")
-    v = np.asarray(np.load(path), float)
+        raise RuntimeError(f"impulsi non trovati: {path}\n"
+                           f"    servono per AP_SOURCE='{AP_SOURCE}': gira extract_AP_pulses_m205.py "
+                           f"sul canale {ch} (richiede il file .bin del raw).")
+    p = np.load(path)
+    if AP_SOURCE == "maxalign":
+        sys.path.insert(0, BASE_DIR)
+        from build_medianAP_maxalign_m205 import align_on_max
+        p = align_on_max(p)
+    return p
+
+
+def load_ap(ch, wp):
+    """AP peak-normalizzato + asse dei tempi (centri dei bin), secondo AP_SOURCE:
+    "root" = medianAP di Octopus dal file; "octopus"/"maxalign" = mediana dei singoli impulsi."""
+    if AP_SOURCE == "root":
+        import uproot
+        with uproot.open(root_file(ch)) as f:
+            v = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
+    else:
+        v = np.median(load_pulses(ch, wp), axis=0)
     t = (np.arange(len(v)) + 0.5) / SAMPLING_RATE
     return t, v / v.max()
 
 
-def pulses_sigma(wp):
-    """Errore per TIME-BIN dai singoli impulsi che formano l'AP, riallineati al massimo
-    esattamente come l'AP (build_medianAP_maxalign_m205.align_on_max).
-
-    ERR_METHOD="bootstrap": dispersione della mediana su BOOT_N ricampionamenti degli impulsi
-    (contiene gia' il 1/sqrt(N), non va diviso altro). "gauss": 1.2533*std/sqrt(N), valido solo
-    per distribuzione gaussiana. FLOOR al livello della baseline: al picco tutti gli impulsi
-    valgono 1 per costruzione (std = 0) e negli ultimi campioni lo zero-padding dello shift
-    da' anch'esso std = 0."""
-    path = os.path.join(PULSE_DIR, PULSE_PATTERN.format(ch=CHANNEL, wp=wp))
-    if not os.path.exists(path):
-        raise RuntimeError(f"impulsi non trovati: {path}  (gira extract_AP_pulses_m205.py)")
-    sys.path.insert(0, BASE_DIR)
-    from build_medianAP_maxalign_m205 import align_on_max
-    p = align_on_max(np.load(path))
+def err_from_pulses(ch, wp):
+    """Errore per TIME-BIN dai singoli impulsi, per BOOTSTRAP: la dispersione delle mediane
+    ricampionate E' l'errore della mediana (contiene gia' il 1/sqrt(N)) e non assume nessuna
+    forma di distribuzione. Floor al livello della baseline: con "maxalign" al picco tutti gli
+    impulsi valgono 1 per costruzione (std = 0) e in coda c'e' lo zero-padding dello shift."""
+    p = load_pulses(ch, wp)
     n = len(p)
-    if ERR_METHOD == "bootstrap":
-        rng = np.random.default_rng(0)
-        meds = np.empty((BOOT_N, p.shape[1]))
-        for b in range(BOOT_N):
-            meds[b] = np.median(p[rng.integers(0, n, n)], axis=0)
-        err = meds.std(axis=0, ddof=1)
-    else:
-        err = 1.2533 * p.std(axis=0, ddof=1) / np.sqrt(n)
+    rng = np.random.default_rng(0)
+    meds = np.empty((BOOT_N, p.shape[1]))
+    for b in range(BOOT_N):
+        meds[b] = np.median(p[rng.integers(0, n, n)], axis=0)
+    err = meds.std(axis=0, ddof=1)
     n_base = int(0.40 * p.shape[1])
     return np.maximum(err, np.median(err[:n_base])), n
+
+
+def err_from_apdistro(ch, wp, v):
+    """Errore per TIME-BIN dalla TH2D APdistro (AP_SOURCE="root"): per ogni colonna la
+    dispersione dei singoli impulsi / sqrt(N), col fattore 1.2533 = sqrt(pi/2) che porta
+    dall'errore della media a quello della MEDIANA (vale per distribuzione gaussiana).
+
+    FLOOR = RMS di baseline dell'AP: i bin dell'istogramma sono larghi 0.006, sette volte piu'
+    del rumore, quindi dove il segnale e' quieto tutti gli impulsi cadono nello stesso bin e la
+    dispersione misurata e' zero. L'RMS del pretrigger dell'AP e' proprio l'errore della mediana
+    in quella regione, quindi il floor e' la stima corretta, non un tappo."""
+    import uproot
+    with uproot.open(root_file(ch)) as f:
+        h = f[f"averagepulse_ap_wp{wp}_APdistro"]
+        cnt = np.asarray(h.values(), float)
+        yc = np.asarray(h.axis(1).centers(), float)
+    N = cnt.sum(axis=1)
+    n_ev = int(round(float(N.max())))
+    good = N > 0
+    mean = np.zeros(cnt.shape[0]); var = np.zeros(cnt.shape[0])
+    mean[good] = (cnt[good] * yc).sum(1) / N[good]
+    var[good] = (cnt[good] * (yc - mean[good][:, None]) ** 2).sum(1) / N[good]
+    err = 1.2533 * np.sqrt(var) / np.sqrt(max(n_ev, 1))
+    floor = float(v[:int(0.40 * len(v))].std())
+    return np.maximum(err, floor), n_ev
+
+
+def pulses_sigma(ch, wp, v):
+    """Errore per time-bin secondo AP_SOURCE. Ritorna (err, n_impulsi)."""
+    return (err_from_apdistro(ch, wp, v) if AP_SOURCE == "root"
+            else err_from_pulses(ch, wp))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -304,44 +393,48 @@ def fit_model(t, v, err, n_real, nzer):
 # ═════════════════════════════════════════════════════════════════════════════
 # WORKER: un fit -> un .npz
 # ═════════════════════════════════════════════════════════════════════════════
-def run_worker(wp, n_real, nzer):
+def run_worker(ch, wp, n_real, nzer):
     try:
-        t, v = load_ap(wp)
-        err, n_pulses = pulses_sigma(wp)
+        t, v = load_ap(ch, wp)
+        err, n_pulses = pulses_sigma(ch, wp, v)
         res = fit_model(t, v, err, n_real, nzer)
         os.makedirs(FITS_DIR, exist_ok=True)
-        np.savez(combo_npz(wp, n_real, nzer),
+        np.savez(combo_npz(ch, wp, n_real, nzer),
                  fit=res["fit"].astype(np.float32), err=err.astype(np.float32),
                  rms=res["rms"], chi=res["chi"], theta=res["theta"], perr=res["perr"],
                  cond=res["cond"], rail=np.array(res["rail"], dtype=object),
                  names=np.array(res["names"], dtype=object),
-                 n_real=n_real, nzer=nzer, wp=wp, n_pulses=n_pulses)
+                 n_real=n_real, nzer=nzer, wp=wp, channel=ch, n_pulses=n_pulses,
+                 ap_source=AP_SOURCE)
         rail = ("RAILING: " + ", ".join(res["rail"])) if res["rail"] else "no railing"
-        print(f"[OK] wp{wp} {label(n_real, nzer)}  chi={res['chi']:.2f}  rms={res['rms']:.2e}  "
+        print(f"[OK] ch{ch} wp{wp} {label(n_real, nzer)}  chi={res['chi']:.2f}  rms={res['rms']:.2e}  "
               f"cond={res['cond']:.1e}  {rail}")
     except Exception as e:
-        print(f"[ERROR] wp{wp} {label(n_real, nzer)}: {e}")
+        print(f"[ERROR] ch{ch} wp{wp} {label(n_real, nzer)}: {e}")
         sys.exit(1)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PLOT: una canva 2x2 per WP (i 4 modelli, ciascuno con fit e residuo)
 # ═════════════════════════════════════════════════════════════════════════════
-def plot_wp(wp):
+def plot_wp(ch, wp):
+    """Una canva per (canale, WP): un pannello per modello (griglia 2 colonne, o 1 se il
+    modello e' uno solo), ciascuno con il fit sopra e il residuo in unita' di errore sotto."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    t, v = load_ap(wp)
+    t, v = load_ap(ch, wp)
     t_rise, t_dec, t_peak = measure_timescales(t, v)
-    # 4 pannelli (2x2), ognuno = fit sopra + residuo sotto -> gridspec 4 righe x 2 colonne
-    fig, axes = plt.subplots(4, 2, figsize=(14, 10), sharex="col",
-                             gridspec_kw={"height_ratios": [3, 1, 3, 1]})
+    ncol = 2 if len(MODELS) > 1 else 1
+    nrow = int(np.ceil(len(MODELS) / ncol)) * 2          # ogni modello = riga fit + riga residuo
+    fig, axes = plt.subplots(nrow, ncol, figsize=(7 * ncol, 5 * nrow // 2), squeeze=False,
+                             sharex="col", gridspec_kw={"height_ratios": [3, 1] * (nrow // 2)})
     n_ok = 0
     for k, (n_real, nzer) in enumerate(MODELS):
-        row, col = (k // 2) * 2, k % 2
-        ax, axr = axes[row, col], axes[row + 1, col]
-        p = combo_npz(wp, n_real, nzer)
+        row, col = (k // ncol) * 2, k % ncol
+        ax, axr = axes[row][col], axes[row + 1][col]
+        p = combo_npz(ch, wp, n_real, nzer)
         if not os.path.exists(p):
             ax.text(0.5, 0.5, f"{label(n_real, nzer)}: fit mancante", ha="center",
                     va="center", transform=ax.transAxes)
@@ -349,7 +442,7 @@ def plot_wp(wp):
         d = np.load(p, allow_pickle=True)
         fit, err = np.asarray(d["fit"], float), np.asarray(d["err"], float)
         n_ok += 1
-        ax.plot(t, v, "k.", ms=2, label="AP data (max-aligned)")
+        ax.plot(t, v, "k.", ms=2, label=f"AP data ({AP_SOURCE})")
         ax.plot(t, fit, "r-", lw=1.4, label="fit")
         ax.fill_between(t, fit - 3 * err, fit + 3 * err, color="red", alpha=0.15,
                         label=r"fit $\pm\,3\cdot$err")
@@ -360,8 +453,7 @@ def plot_wp(wp):
                      fontsize=9.5)
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, ls="--", alpha=0.4)
-        # parametri nel riquadro
-        theta, names = np.asarray(d["theta"], float), d["names"].tolist()
+        theta = np.asarray(d["theta"], float)
         txt = [f"t0 = {theta[0]:.5f} s"]
         txt += ["zeros: " + ", ".join(f"{z:.0f}" for z in theta[1:1 + nzer])] if nzer else []
         txt += ["poles: " + ", ".join(f"{q:.0f}" for q in theta[1 + nzer:])]
@@ -375,25 +467,23 @@ def plot_wp(wp):
         axr.set_ylabel("(fit-data)/err", fontsize=8)
         axr.grid(True, ls="--", alpha=0.4)
         axr.set_xlim(t_peak - 5 * t_rise, t_peak + 8 * t_dec)
-    for col in (0, 1):
-        axes[3, col].set_xlabel("Time (s)")
-    fig.suptitle(f"m205 Ch{CHANNEL} WP{wp} — pole-zero + Bessel({BESSEL_ORDER}@{FCUT}Hz), "
-                 f"errori dai singoli impulsi ({ERR_METHOD})", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    out = os.path.join(OUTDIR, f"fit4_ch{CHANNEL}_wp{wp}.png")
+    for col in range(ncol):
+        axes[nrow - 1][col].set_xlabel("Time (s)")
+    fig.suptitle(f"m205 Ch{ch} WP{wp} — pole-zero + Bessel({BESSEL_ORDER}@{FCUT}Hz), "
+                 f"AP da '{AP_SOURCE}'", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    out = os.path.join(OUTDIR, f"fit_ch{ch}_wp{wp}.png")
     fig.savefig(out, dpi=130)
     plt.close(fig)
     print(f"[{n_ok}/{len(MODELS)} fit] canva -> {out}")
 
 
-def best_fit(wp):
-    """(n_real, nzer, dati del .npz) del modello col chi minore per questo WP; None se
-    non c'e' nessun fit. NB: il chi minimo premia sempre il modello con piu' parametri
-    (a WP alti 9p z4 scende sotto 1, cioe' assorbe il rumore): e' il migliore in senso
-    statistico, non necessariamente quello con i parametri piu' fisici."""
+def best_fit(ch, wp):
+    """(n_real, nzer, dati del .npz) del modello col chi minore per questo (canale, WP);
+    None se non c'e' nessun fit. Con un solo modello in MODELS e' semplicemente quello."""
     cands = []
     for n_real, nzer in MODELS:
-        p = combo_npz(wp, n_real, nzer)
+        p = combo_npz(ch, wp, n_real, nzer)
         if os.path.exists(p):
             d = np.load(p, allow_pickle=True)
             cands.append((float(d["chi"]), n_real, nzer, d))
@@ -404,33 +494,36 @@ def best_fit(wp):
 
 
 def save_best_fits():
-    """Salva l'impulso fittato migliore di ogni WP come vettore .npy, pronto da usare come
-    template (stessa griglia dell'AP: 10000 campioni a SAMPLING_RATE, picco normalizzato a 1).
+    """Salva l'impulso fittato migliore di ogni (canale, WP) come vettore .npy, pronto da usare
+    come template (stessa griglia dell'AP, picco normalizzato a 1).
     -> <OUTDIR>/bestfit_ch<ch>_wp<wp>.npy"""
     os.makedirs(OUTDIR, exist_ok=True)
-    for wp in list_wps():
-        b = best_fit(wp)
-        if b is None:
-            continue
-        n_real, nzer, d = b
-        fit = np.asarray(d["fit"], float)
-        out = os.path.join(OUTDIR, f"bestfit_ch{CHANNEL}_wp{wp}.npy")
-        np.save(out, fit / fit.max())
-        print(f"wp{wp:<3d} migliore: {label(n_real, nzer):8s} chi={float(d['chi']):.2f}  -> {os.path.basename(out)}")
+    for ch in CHANNELS:
+        for wp in list_wps(ch):
+            b = best_fit(ch, wp)
+            if b is None:
+                continue
+            n_real, nzer, d = b
+            fit = np.asarray(d["fit"], float)
+            out = os.path.join(OUTDIR, f"bestfit_ch{ch}_wp{wp}.npy")
+            np.save(out, fit / fit.max())
+            print(f"ch{ch} wp{wp:<3d} migliore: {label(n_real, nzer):8s} "
+                  f"chi={float(d['chi']):.2f}  -> {os.path.basename(out)}")
 
 
 def run_plot():
     os.makedirs(OUTDIR, exist_ok=True)
-    for wp in list_wps():
-        plot_wp(wp)
+    for ch in CHANNELS:
+        for wp in list_wps(ch):
+            plot_wp(ch, wp)
     save_best_fits()
 
 
 def run_psd():
-    """Power spectrum del fit MIGLIORE di ogni WP, sovrapposto a quello del medianAP letto dal
-    file ROOT (l'AP di Octopus). Stessa definizione di PSD del resto del progetto: si riusa
-    compute_psd di plot_AP_spectra_m205 (segnale a media nulla, finestra di Hann,
-    |rfft|^2/(fs*N)). Una griglia con un pannello per WP.  -> AP_fit_vs_root_psd_ch<ch>.png"""
+    """Power spectrum del fit migliore di ogni WP, sovrapposto a quello del medianAP letto dal
+    ROOT. Stessa definizione di PSD del resto del progetto: si riusa compute_psd di
+    plot_AP_spectra_m205 (media nulla, finestra di Hann, |rfft|^2/(fs*N)). Una griglia per
+    canale, un pannello per WP.  -> AP_fit_vs_root_psd_ch<ch>.png"""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -438,69 +531,66 @@ def run_psd():
     sys.path.insert(0, BASE_DIR)
     from plot_AP_spectra_m205 import compute_psd
 
-    fp = glob.glob(os.path.join(BASE_DIR, "Processed", f"Processed_*_000205_{CHANNEL}.root"))
-    if not fp:
-        sys.exit(f"[ERROR] ROOT del canale {CHANNEL} non trovato in Processed/")
-
-    wps = list_wps()
-    ncol = 4
-    nrow = int(np.ceil(len(wps) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.1 * nrow),
-                             sharex=True, sharey=True)
-    axes = np.atleast_1d(axes).ravel()
-    with uproot.open(fp[0]) as f:
-        for ax, wp in zip(axes, wps):
-            ap_root = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
-            ap_root = ap_root / ap_root.max()
-            fr, psd_root = compute_psd(ap_root, SAMPLING_RATE)
-            ax.loglog(fr[1:], psd_root[1:], color="0.35", lw=1.0, label="medianAP (ROOT)")
-            b = best_fit(wp)
-            if b is not None:
-                n_real, nzer, d = b
-                fit = np.asarray(d["fit"], float); fit = fit / fit.max()
-                ff, psd_fit = compute_psd(fit, SAMPLING_RATE)
-                ax.loglog(ff[1:], psd_fit[1:], color="tab:red", lw=1.2, alpha=0.9,
-                          label=f"fit {label(n_real, nzer)} (χ={float(d['chi']):.2f})")
-            ax.set_title(f"WP{wp}  ({sc.wp_to_vbias(wp):g} V)", fontsize=9)
-            ax.grid(True, which="both", ls="--", alpha=0.35)
-            ax.legend(fontsize=7, loc="lower left")
-    for ax in axes[len(wps):]:
-        ax.set_visible(False)
-    for ax in axes[len(wps) - ncol:len(wps)]:
-        ax.set_xlabel("Frequency (Hz)")
-    for k in range(0, len(wps), ncol):
-        axes[k].set_ylabel("AP power spectrum")
-    fig.suptitle(f"m205 Ch{CHANNEL} — power spectrum: fit migliore vs medianAP di Octopus",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    out = os.path.join(OUTDIR, f"AP_fit_vs_root_psd_ch{CHANNEL}.png")
-    fig.savefig(out, dpi=130)
-    plt.close(fig)
-    print(f"PSD -> {out}")
+    for ch in CHANNELS:
+        wps = list_wps(ch)
+        ncol = 4
+        nrow = int(np.ceil(len(wps) / ncol))
+        fig, axes = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.1 * nrow),
+                                 sharex=True, sharey=True)
+        axes = np.atleast_1d(axes).ravel()
+        with uproot.open(root_file(ch)) as f:
+            for ax, wp in zip(axes, wps):
+                ap_root = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
+                ap_root = ap_root / ap_root.max()
+                fr, psd_root = compute_psd(ap_root, SAMPLING_RATE)
+                ax.loglog(fr[1:], psd_root[1:], color="0.35", lw=1.0, label="medianAP (ROOT)")
+                b = best_fit(ch, wp)
+                if b is not None:
+                    n_real, nzer, d = b
+                    fit = np.asarray(d["fit"], float); fit = fit / fit.max()
+                    ff, psd_fit = compute_psd(fit, SAMPLING_RATE)
+                    ax.loglog(ff[1:], psd_fit[1:], color="tab:red", lw=1.2, alpha=0.9,
+                              label=f"fit {label(n_real, nzer)} (χ={float(d['chi']):.2f})")
+                ax.set_title(f"WP{wp}  ({sc.wp_to_vbias(wp):g} V)", fontsize=9)
+                ax.grid(True, which="both", ls="--", alpha=0.35)
+                ax.legend(fontsize=7, loc="lower left")
+        for ax in axes[len(wps):]:
+            ax.set_visible(False)
+        for ax in axes[max(len(wps) - ncol, 0):len(wps)]:
+            ax.set_xlabel("Frequency (Hz)")
+        for k in range(0, len(wps), ncol):
+            axes[k].set_ylabel("AP power spectrum")
+        fig.suptitle(f"m205 Ch{ch} — power spectrum: fit vs medianAP di Octopus", fontsize=13)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        out = os.path.join(OUTDIR, f"AP_fit_vs_root_psd_ch{ch}.png")
+        fig.savefig(out, dpi=130)
+        plt.close(fig)
+        print(f"PSD -> {out}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CSV riassuntivo
 # ═════════════════════════════════════════════════════════════════════════════
 def run_csv():
-    out = os.path.join(OUTDIR, f"fit_params_ch{CHANNEL}.csv")
-    head = ("channel,wp,vbias,model,n_real,nzer,bessel_order,fcut,n_pulses,rms,chi,cond,"
-            "railing,t0,zeros,real_poles,param_errors")
+    out = os.path.join(OUTDIR, "fit_params.csv")
+    head = ("channel,wp,vbias,ap_source,model,n_real,nzer,bessel_order,fcut,n_pulses,rms,chi,"
+            "cond,railing,t0,zeros,real_poles,param_errors")
     lines = [head]
-    for wp in list_wps():
-        for n_real, nzer in MODELS:
-            p = combo_npz(wp, n_real, nzer)
-            if not os.path.exists(p):
-                continue
-            d = np.load(p, allow_pickle=True)
-            th = np.asarray(d["theta"], float); pe = np.asarray(d["perr"], float)
-            js = lambda a: " ".join(f"{x:.6g}" for x in a)
-            lines.append(",".join([
-                str(CHANNEL), str(wp), f"{sc.wp_to_vbias(wp):g}", label(n_real, nzer),
-                str(n_real), str(nzer), str(BESSEL_ORDER), str(FCUT), str(int(d["n_pulses"])),
-                f"{float(d['rms']):.6e}", f"{float(d['chi']):.4f}", f"{float(d['cond']):.3e}",
-                f'"{"; ".join(d["rail"].tolist())}"',
-                f"{th[0]:.8f}", f'"{js(th[1:1+nzer])}"', f'"{js(th[1+nzer:])}"', f'"{js(pe)}"']))
+    for ch in CHANNELS:
+        for wp in list_wps(ch):
+            for n_real, nzer in MODELS:
+                p = combo_npz(ch, wp, n_real, nzer)
+                if not os.path.exists(p):
+                    continue
+                d = np.load(p, allow_pickle=True)
+                th = np.asarray(d["theta"], float); pe = np.asarray(d["perr"], float)
+                js = lambda a: " ".join(f"{x:.6g}" for x in a)
+                lines.append(",".join([
+                    str(ch), str(wp), f"{sc.wp_to_vbias(wp):g}", AP_SOURCE, label(n_real, nzer),
+                    str(n_real), str(nzer), str(BESSEL_ORDER), str(FCUT), str(int(d["n_pulses"])),
+                    f"{float(d['rms']):.6e}", f"{float(d['chi']):.4f}", f"{float(d['cond']):.3e}",
+                    f'"{"; ".join(d["rail"].tolist())}"',
+                    f"{th[0]:.8f}", f'"{js(th[1:1+nzer])}"', f'"{js(th[1+nzer:])}"', f'"{js(pe)}"']))
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"CSV -> {out}")
@@ -509,42 +599,49 @@ def run_csv():
 # ═════════════════════════════════════════════════════════════════════════════
 # ORCHESTRATORE: un job per (WP, modello)
 # ═════════════════════════════════════════════════════════════════════════════
-def make_job_lines(wp, n_real, nzer):
+def make_job_lines(ch, wp, n_real, nzer):
     return ([f"cd {BASE_DIR}"] + list(sc.ENV_SETUP_LINES)
-            + [f"{sys.executable} {sc.SCRIPT_PATH} --worker --wp {wp} "
+            + [f"{sys.executable} {sc.SCRIPT_PATH} --worker --channel {ch} --wp {wp} "
                f"--nreal {n_real} --cc 0 --nzer {nzer}"])
 
 
 def run_orchestrator():
     for d in (OUTDIR, FITS_DIR, LOG_DIR, JOBS_DIR):
         os.makedirs(d, exist_ok=True)
-    wps = list_wps()
-    if not wps:
-        sys.exit(f"[ERROR] nessun AP in {PULSE_DIR} (pattern {AP_PATTERN.format(ch=CHANNEL, wp='*')})")
-    tasks = [(wp, nr, nz) for wp in wps for (nr, nz) in MODELS]
-    print(f"Canale {CHANNEL}: WP {wps} x {len(MODELS)} modelli = {len(tasks)} fit.")
+    tasks = []
+    for ch in CHANNELS:
+        wps = list_wps(ch)
+        if not wps:
+            print(f"[WARN] canale {ch}: nessun WP disponibile con AP_SOURCE='{AP_SOURCE}' "
+                  f"(mancano i {PULSE_PATTERN.format(ch=ch, wp='*')} in {PULSE_DIR}?) - SALTATO")
+            continue
+        tasks += [(ch, wp, nr, nz) for wp in wps for (nr, nz) in MODELS]
+    if not tasks:
+        sys.exit(f"[ERROR] nessun AP trovato (AP_SOURCE='{AP_SOURCE}', canali {CHANNELS})")
+    print(f"Canali {CHANNELS} x WP x {len(MODELS)} modelli = {len(tasks)} fit "
+          f"(AP da '{AP_SOURCE}').")
 
     if RESET:
-        for old in glob.glob(os.path.join(FITS_DIR, "*.npz")):
-            os.remove(old)
+        for old_npz in glob.glob(os.path.join(FITS_DIR, "*.npz")):
+            os.remove(old_npz)
         print(f"Cartella fit azzerata: {FITS_DIR}")
 
     if sc.SUBMIT_MODE == "local":
         print("[INFO] SUBMIT_MODE='local': eseguo i fit in sequenza (no qsub).\n")
-        for wp, nr, nz in tasks:
-            run_worker(wp, nr, nz)
+        for ch, wp, nr, nz in tasks:
+            run_worker(ch, wp, nr, nz)
         run_plot()
         run_csv()
         run_psd()
         return
 
     submitted, failed = 0, []
-    for wp, nr, nz in tasks:
+    for ch, wp, nr, nz in tasks:
         sc.wait_for_slot()
-        key = f"{wp}_{nr}z{nz}"
+        key = f"{ch}_{wp}_{nr}z{nz}"
         jobid = None
         for _ in range(3):
-            jobid = sc.submit_task(key, sc.create_sh(make_job_lines(wp, nr, nz)))
+            jobid = sc.submit_task(key, sc.create_sh(make_job_lines(ch, wp, nr, nz)))
             if jobid is not None:
                 break
             time.sleep(sc.SLEEP_INTERVAL)
@@ -558,14 +655,15 @@ def run_orchestrator():
         print(f"  {len(failed)} NON sottomessi: {failed}")
     print(f"  Ogni job salva il suo .npz in: {FITS_DIR}")
     print(f"  Log dei job in: {LOG_DIR}")
-    print(f"  A job finiti:  python {os.path.basename(__file__)} --plot  (canve 2x2 + bestfit .npy)")
-    print(f"                 poi  --csv  e  --psd  (spettri dei fit vs medianAP del ROOT)")
+    print(f"  A job finiti:  python {os.path.basename(__file__)} --plot  (canve + bestfit .npy)")
+    print(f"                 poi  --csv  e  --psd")
     print("=" * 65 + "\n")
 
 
 def main():
     p = argparse.ArgumentParser(description="Fit AP max-aligned, 4 modelli pole-zero + Bessel (m205).")
     p.add_argument("--worker", action="store_true")
+    p.add_argument("--channel", type=int)
     p.add_argument("--wp", type=int)
     p.add_argument("--nreal", type=int)
     p.add_argument("--nzer", type=int)
@@ -578,9 +676,9 @@ def main():
     args = p.parse_args()
 
     if args.worker:
-        if None in (args.wp, args.nreal, args.nzer):
-            sys.exit("[ERROR] --worker richiede --wp --nreal --nzer")
-        run_worker(args.wp, args.nreal, args.nzer)
+        if None in (args.channel, args.wp, args.nreal, args.nzer):
+            sys.exit("[ERROR] --worker richiede --channel --wp --nreal --nzer")
+        run_worker(args.channel, args.wp, args.nreal, args.nzer)
     elif args.plot:
         run_plot()
     elif args.csv:

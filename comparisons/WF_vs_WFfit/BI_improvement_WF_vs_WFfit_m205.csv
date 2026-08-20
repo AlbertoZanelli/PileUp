@@ -1,0 +1,9 @@
+"# A = Wiener (scalar λ) (baseline),  B = Wiener on fitted template,  improvement_pct = 100*(BI_A - BI_B)/BI_A"
+channel,vbias_V,BI_A,BI_B,improvement_pct
+91,5.000,1.494985e-04,1.488611e-04,0.4264
+
+# mean improvement per channel
+channel,mean_improvement_pct,n_points
+91,0.4264,1
+
+# global mean improvement (all points),0.4264
