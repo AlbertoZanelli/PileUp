@@ -65,7 +65,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
 SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
 
-CHANNELS = [91, 34]        # uno o piu' canali: i file di output hanno il canale nel nome
+CHANNELS = [31]        # uno o piu' canali: i file di output hanno il canale nel nome
 DATA_DIR = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME = "000205"
 
@@ -99,7 +99,7 @@ PULSE_PATTERN = "pulses_ch{ch}_wp{wp}.npy"                # impulsi che lo forma
 SAMPLING_RATE = 10_000                                    # Hz, per l'asse dei tempi
 
 # ── Modelli da fittare: (n_poli_reali, n_zeri). Niente coppie CC.
-MODELS = [(9, 4)]
+MODELS = [(7, 3), (7, 4), (7, 5), (8, 5), (8, 6), (9, 4), (9, 5), (10, 4), (10, 5), (10, 6)]   # 4 modelli da fittare per ogni WP
 
 BESSEL_ORDER = 6         # FISSO
 FCUT         = 2500      # Hz, FISSO
