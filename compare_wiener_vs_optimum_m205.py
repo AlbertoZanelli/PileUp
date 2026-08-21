@@ -105,6 +105,14 @@ SET_LABELS = {"": "Optimum filter", "_wiener": "Wiener (scalar λ)",
               "_wiener_root_R": "Wiener + R(f), β=2"}         # idem, TEMPLATE_SOURCE="root" + USE_R
 SET_CODES  = {"": "OF", "_wiener": "WF", "_wiener_freq": "WFfreq",
               "_wiener_fit": "WFfit", "_wiener_root_R": "WFrootR"}
+# Un COLORE PER SUFFISSO, non per ruolo A/B: cosi' lo stesso set ha sempre lo stesso colore in
+# tutti i confronti (in OF_vs_WF e in WF_vs_WFfit il Wiener scalare resta arancione), e figure
+# di confronti diversi non si confondono fra loro.
+SET_COLORS = {"": "#1f4e79",              # navy   - filtro ottimo
+              "_wiener": "#e8871e",       # ambra  - Wiener lambda scalare
+              "_wiener_freq": "#2ca02c",  # verde  - Wiener lambda(f)
+              "_wiener_fit": "#8c1d9c",   # viola  - Wiener su template fittato
+              "_wiener_root_R": "#c02b2b"}  # rosso - Wiener + R(f)
 
 
 def _bi_csv(suffix: str) -> str:
@@ -138,10 +146,19 @@ else:
     NAME_TAG = ""
     CHANNEL_CMAP = "tab10"
 
-# Colori fissi per i due set (indipendenti dal canale): navy = A (baseline),
-# ambra = B (valutato).
-A_COLOR = "#1f4e79"
-B_COLOR = "#e8871e"
+def _color(suffix: str) -> str:
+    """Colore del set, dal suffisso (vedi SET_COLORS). Per un suffisso non elencato si pesca
+    un colore dalla palette tab10, deterministico sul nome, cosi' resta stabile fra i lanci."""
+    if suffix in SET_COLORS:
+        return SET_COLORS[suffix]
+    import matplotlib.pyplot as _plt
+    palette = _plt.get_cmap("tab10").colors
+    return palette[sum(map(ord, suffix)) % len(palette)]
+
+
+# Colori dei due set: dipendono dal SUFFISSO, non dal ruolo A/B (vedi SET_COLORS).
+A_COLOR = _color(SUFFIX_A)
+B_COLOR = _color(SUFFIX_B)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

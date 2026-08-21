@@ -19,6 +19,11 @@ Esempi:
 
 Le ampiezze del segnale vengono lette dal CSV prodotto da plot_all_root.py
 (LOAD_CURVE), per ogni coppia (canale, V_bias).
+Due modalita', dalla config in testa:
+  - TEMPLATE_SOURCE = "root" -> medianAP di Octopus (comportamento originale);
+  - TEMPLATE_SOURCE = "fit"  -> impulso fittato migliore di scan_residuals_bessel_m205.py.
+ONLY_CHANNELS limita l'analisi a un sottoinsieme di canali. Cartelle e CSV portano il tag della
+modalita' (m205_results_octopus / m205_results_octopus_fit), quindi le due non si sovrascrivono.
 """
 
 from __future__ import annotations
@@ -46,10 +51,29 @@ import uproot        # serve all'orchestratore per elencare i WP
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
-OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MODALITA': da dove viene il TEMPLATE, e quali canali elaborare
+# ═════════════════════════════════════════════════════════════════════════════
+# TEMPLATE_SOURCE = "root" -> medianAP di Octopus dal file ROOT (comportamento originale).
+# TEMPLATE_SOURCE = "fit"  -> impulso FITTATO migliore di scan_residuals_bessel_m205.py
+#   (residual_scan_bessel/fits_<ap_source>/bestfit_ch<ch>_wp<wp>.npy), cioe' un template
+#   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
+# In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
+# prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
+TEMPLATE_SOURCE = "root"     # "root" | "fit"
+
+FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
+FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
+
+# Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
+ONLY_CHANNELS = None
+
+_TAG        = "" if TEMPLATE_SOURCE == "root" else "_fit"
+OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
-OUTPUT_CSV  = os.path.join(OUTPUT_DIR, "BI_results_m205.csv")
+OUTPUT_CSV  = os.path.join(OUTPUT_DIR, f"BI_results_m205{_TAG}.csv")
 # Cartella coi filtri di banda ADDESTRATI f1, f2 e il KERNEL applicato (qui il
 # filtro ottimo H_unit), salvati come .npy (uno per coppia canale/WP, nomi distinti
 # -> nessuna concorrenza). Il filtro totale applicato ai dati e' g_i = f_i * H_unit.
@@ -59,7 +83,11 @@ MEAS_NAME = "000205"
 
 # ── CSV delle ampiezze scritto da plot_all_root.py (LOAD_CURVE)
 #    Atteso con colonne: channel, vbias_V, risetime_ms, amplitude_mV
-AMP_CSV = os.path.join(DATA_DIR, "amplitudes_m205.csv")
+# Il CSV delle ampiezze sta nella cartella base (come per analyse_BI_m205_wiener*), ma qui
+# storicamente veniva cercato in Processed/: si accettano entrambe le posizioni.
+AMP_CSV = next((p for p in (os.path.join(BASE_DIR, "amplitudes_m205.csv"),
+                            os.path.join(DATA_DIR, "amplitudes_m205.csv")) if os.path.exists(p)),
+               os.path.join(BASE_DIR, "amplitudes_m205.csv"))
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Cluster / scheduler config  (ADATTA al tuo cluster)
@@ -70,7 +98,7 @@ WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
-JOB_NAME_PREFIX   = "BI"      # usato per nominare i job e per il throttling via qstat
+JOB_NAME_PREFIX   = "BI" + ("" if TEMPLATE_SOURCE == "root" else "F")   # nome job / throttling qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
 RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
@@ -145,7 +173,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #   beta_Hz = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
 #   rho_t   = SNR * beta  = figura di merito temporale per il pile-up (Hz)
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "template", "BI", "J_final"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -270,6 +298,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "SNR": SNR,
         "beta_Hz": beta_Hz,
         "rho_t": rho_t,
+        "template": TEMPLATE_SOURCE,
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
         # Filtri di banda e kernel (qui il filtro ottimo H_unit), salvati a parte
@@ -304,9 +333,18 @@ def run_worker(channel: int, wp: int):
         shared = build_shared(device)
 
         # 3. Estrazione Meanpulse + NPS
+        #    Il template viene dal fit oppure dall'AP di Octopus (TEMPLATE_SOURCE);
+        #    la NPS viene comunque dal ROOT.
         with uproot.open(filepath) as f:
-            hist_pulse = f[f"averagepulse_ap_wp{wp}_medianAP"]
-            meanpulse = np.asarray(hist_pulse.values(), dtype=float)
+            if TEMPLATE_SOURCE == "fit":
+                fit_path = os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
+                if not os.path.exists(fit_path):
+                    raise RuntimeError(f"fit non trovato: {fit_path} "
+                                       f"(gira scan_residuals_bessel_m205.py --plot)")
+                meanpulse = np.asarray(np.load(fit_path), dtype=float)
+            else:
+                meanpulse = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), dtype=float)
+            meanpulse = meanpulse / meanpulse.max()        # picco = 1 in entrambi i casi
 
             hist_nps = f[f"averagepowerspectrum_noise_wp{wp}_medianpower"]
             nps = np.asarray(hist_nps.values(), dtype=float)
@@ -431,6 +469,22 @@ def run_orchestrator():
         for wp in wp_indices:
             if (ch, round(float(wp_to_vbias(wp)), 3)) in amps:
                 tasks.append((ch, wp))
+
+    if ONLY_CHANNELS:
+        tasks = [(ch, wp) for (ch, wp) in tasks if ch in ONLY_CHANNELS]
+        print(f"[INFO] ONLY_CHANNELS={ONLY_CHANNELS}: {len(tasks)} coppie (canale, WP) selezionate")
+
+    # In modalita' "fit" servono i bestfit_ch<ch>_wp<wp>.npy dello scan: le coppie che non li
+    # hanno vengono SALTATE invece di generare job destinati a fallire (lo scan puo' aver girato
+    # solo su alcuni canali).
+    if TEMPLATE_SOURCE == "fit":
+        have = [(ch, wp) for (ch, wp) in tasks
+                if os.path.exists(os.path.join(FIT_DIR, FIT_PATTERN.format(ch=ch, wp=wp)))]
+        if len(have) < len(tasks):
+            missing = sorted({ch for (ch, wp) in tasks} - {ch for (ch, wp) in have})
+            print(f"[INFO] TEMPLATE_SOURCE='fit': saltate {len(tasks)-len(have)} coppie senza fit "
+                  f"in {FIT_DIR} (canali senza fit: {missing})")
+        tasks = have
 
     print(f"Task totali (canale, WP) da elaborare: {len(tasks)}")
     if not tasks:

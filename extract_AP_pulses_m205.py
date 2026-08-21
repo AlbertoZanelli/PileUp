@@ -59,7 +59,7 @@ OUT_DIR    = os.path.join(BASE_DIR, "m205_AP_pulses")
 MEAS_NAME  = "000205"
 PREFIX     = "20260406T161631"      # filenamePrefix del run (vedi cfg/configMerger_0.toml)
 
-CHANNEL    = 91
+CHANNELS   = [91]                   # uno o piu' canali: serve il .bin di ciascuno in BIN_DIR
 WPS        = list(range(1, 30, 2))  # WP dispari (convenzione del progetto); [15] per uno solo
 
 WINDOW     = 10_000                 # module.module.light windowlength 1.0 s @ 10 kHz
@@ -139,42 +139,49 @@ def load_ap_pulses(channel, wp, normalize=NORMALIZE):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    root = glob.glob(os.path.join(DATA_DIR, f"Processed_*_{MEAS_NAME}_{CHANNEL}.root"))[0]
-    for wp in WPS:
-        pulses, fs = load_ap_pulses(CHANNEL, wp)
-        out = os.path.join(OUT_DIR, f"pulses_ch{CHANNEL}_wp{wp}.npy")
-        np.save(out, pulses)
+    for channel in CHANNELS:
+        root = glob.glob(os.path.join(DATA_DIR, f"Processed_*_{MEAS_NAME}_{channel}.root"))
+        if not root:
+            print(f"[SKIP] ch{channel}: file ROOT non trovato in {DATA_DIR}")
+            continue
+        if not os.path.exists(bin_path(channel)):
+            print(f"[SKIP] ch{channel}: binario non trovato -> {bin_path(channel)}")
+            continue
+        for wp in WPS:
+            pulses, fs = load_ap_pulses(channel, wp)
+            out = os.path.join(OUT_DIR, f"pulses_ch{channel}_wp{wp}.npy")
+            np.save(out, pulses)
 
-        # ── controllo: la mediana deve riprodurre l'AP di Octopus ─────────────
-        with uproot.open(root) as f:
-            ap = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
-        med = np.median(pulses, axis=0)
-        med = med / med.max() if NORMALIZE else med
-        print(f"wp{wp:<3d} {len(pulses):3d} impulsi x {pulses.shape[1]} @ {fs:.0f} Hz"
-              f"   max|median - medianAP| = {np.abs(med - ap).max():.1e}   -> {os.path.basename(out)}")
+            # ── controllo: la mediana deve riprodurre l'AP di Octopus ─────────
+            with uproot.open(root[0]) as f:
+                ap = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
+            med = np.median(pulses, axis=0)
+            med = med / med.max() if NORMALIZE else med
+            print(f"ch{channel} wp{wp:<3d} {len(pulses):3d} impulsi x {pulses.shape[1]} @ {fs:.0f} Hz"
+                  f"   max|median - medianAP| = {np.abs(med - ap).max():.1e}   -> {os.path.basename(out)}")
 
-        if PLOT:
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            t = np.arange(WINDOW) / fs
-            fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-            for p in pulses:
-                axes[0].plot(t, p, lw=0.4, alpha=0.5)
-            axes[0].plot(t, med, "k", lw=1.5, label="median of the pulses")
-            axes[0].set_title(f"m205 Ch{CHANNEL} WP{wp} — {len(pulses)} pulses forming the AP")
-            axes[0].legend()
-            axes[1].plot(t, med, label="median (from raw .bin)")
-            axes[1].plot(t, ap, "--", label="Octopus medianAP")
-            axes[1].legend()
-            axes[2].plot(t, med - ap, lw=0.8)
-            axes[2].set_ylabel("residual")
-            axes[2].set_xlabel("time [s]")
-            for a in axes[:2]:
-                a.set_ylabel("normalized" if NORMALIZE else "V")
-            fig.tight_layout()
-            fig.savefig(os.path.join(OUT_DIR, f"pulses_ch{CHANNEL}_wp{wp}.png"), dpi=130)
-            plt.close(fig)
+            if PLOT:
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                t = np.arange(WINDOW) / fs
+                fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+                for p in pulses:
+                    axes[0].plot(t, p, lw=0.4, alpha=0.5)
+                axes[0].plot(t, med, "k", lw=1.5, label="median of the pulses")
+                axes[0].set_title(f"m205 Ch{channel} WP{wp} — {len(pulses)} pulses forming the AP")
+                axes[0].legend()
+                axes[1].plot(t, med, label="median (from raw .bin)")
+                axes[1].plot(t, ap, "--", label="Octopus medianAP")
+                axes[1].legend()
+                axes[2].plot(t, med - ap, lw=0.8)
+                axes[2].set_ylabel("residual")
+                axes[2].set_xlabel("time [s]")
+                for a in axes[:2]:
+                    a.set_ylabel("normalized" if NORMALIZE else "V")
+                fig.tight_layout()
+                fig.savefig(os.path.join(OUT_DIR, f"pulses_ch{channel}_wp{wp}.png"), dpi=130)
+                plt.close(fig)
     print(f"\nTutto in {OUT_DIR}")
 
 

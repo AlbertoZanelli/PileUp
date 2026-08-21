@@ -121,6 +121,9 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 TEMPLATE_SOURCE = "fit"      # "fit" | "root"
 USE_R           = False      # True solo con "root" (vedi sopra)
 
+# Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
+ONLY_CHANNELS   = [91]
+
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 
@@ -561,6 +564,10 @@ def run_orchestrator():
         for wp in wp_indices:
             if (ch, round(float(wp_to_vbias(wp)), 3)) in amps:
                 tasks.append((ch, wp))
+
+    if ONLY_CHANNELS:
+        tasks = [(ch, wp) for (ch, wp) in tasks if ch in ONLY_CHANNELS]
+        print(f"[INFO] ONLY_CHANNELS={ONLY_CHANNELS}: {len(tasks)} coppie (canale, WP) selezionate")
 
     # In modalita' "fit" servono i bestfit_ch<ch>_wp<wp>.npy dello scan: le coppie che non li
     # hanno vengono SALTATE invece di generare job destinati a fallire (lo scan puo' aver girato
