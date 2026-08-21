@@ -85,7 +85,7 @@ MEAS_NAME = "000205"
 #   ""             -> filtro ottimo         (cartella m205_results_octopus)
 #   "_wiener"      -> Wiener lambda scalare  (cartella m205_results_wiener)
 #   "_wiener_freq" -> Wiener lambda(f)       (cartella m205_results_wiener_freq)
-SUFFIX_A = "_wiener"        # riferimento: Wiener su medianAP del ROOT
+SUFFIX_A = "_fit"        # riferimento: Wiener su medianAP del ROOT
 SUFFIX_B = "_wiener_fit"    # confronto:   Wiener su template FITTATO
 
 # Modalità "bad channels": se True confronta i 4 canali normalmente scartati
@@ -95,7 +95,7 @@ BAD_CHANNELS = False
 
 # Canali da escludere IN AGGIUNTA a quelli della modalità (es. [91] per lasciare
 # fuori il canale anomalo).
-EXTRA_EXCLUDE = [31, 34, 71, 83]   # lo scan dei fit ha girato solo sul canale 91
+EXTRA_EXCLUDE = [31,71, 83]   # lo scan dei fit ha girato solo sul canale 91
 
 # Etichette (per titoli e legende, in inglese) e sigle (per il tag del confronto)
 # dei set di risultati, indicizzate dal suffisso.

@@ -61,13 +61,13 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "root"     # "root" | "fit"
+TEMPLATE_SOURCE = "fit"     # "root" | "fit"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = None
+ONLY_CHANNELS = [91, 34]
 
 _TAG        = "" if TEMPLATE_SOURCE == "root" else "_fit"
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
