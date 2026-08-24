@@ -1,8 +1,8 @@
 """
 analysis_BI_m205_wiener_regolarized.py
 ======================================
-Come analyse_BI_m205_wiener.py, ma con DUE aggiunte, entrambe controllate dalla config in
-testa (TEMPLATE_SOURCE, USE_R):
+Come analyse_BI_m205_wiener.py, ma con le aggiunte controllate dalla config in testa
+(TEMPLATE_SOURCE, SIM_SOURCE, USE_R, NPS_SOURCE):
 
   A) TEMPLATE_SOURCE = "fit"  + USE_R = False
      Il template e' l'impulso FITTATO migliore prodotto da scan_residuals_bessel_m205.py
@@ -13,9 +13,15 @@ testa (TEMPLATE_SOURCE, USE_R):
   B) TEMPLATE_SOURCE = "root" + USE_R = True
      Il template e' il medianAP di Octopus dal ROOT e la REGOLARIZZAZIONE R(f) e' attiva.
 
-Le due modalita' scrivono in cartelle e CSV distinti (m205_results_wiener_fit /
-m205_results_wiener_root_R) e usano prefissi di job diversi, quindi si possono lanciare una
-dopo l'altra senza sovrascriversi.
+  C) TEMPLATE_SOURCE = "sim" (+ SIM_SOURCE)
+     Il template e' un AP SIMULATO di build_simAP_injected_m205.py, cioe' la stessa forma
+     con una realizzazione DIVERSA del rumore di template. Serve alla stima onesta
+     dell'overtraining: si addestra qui e si valuta su eventi generati dall'AP vero.
+
+Ogni modalita' scrive in cartelle e CSV distinti (m205_results_wiener_fit,
+m205_results_wiener_root_R, m205_results_wiener_sim_fitinj_R, ...) e usa un prefisso di job
+diverso (BIWF / BIWR / BIWS), quindi si possono lanciare una dopo l'altra senza
+sovrascriversi. Il suffisso _npsclean si aggiunge con NPS_SOURCE = "clean".
 
 Sulla REGOLARIZZAZIONE R(f) sul template
 (affidabilita' per bin, estimatore A) attiva nel training:
@@ -121,14 +127,37 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 # dei job dipendono dalla modalita', cosi' le analisi non si sovrascrivono a vicenda.
 # NB: R(f) dipende dalla NPS (confronta la potenza dell'AP con beta*ANPS/N), quindi cambiando
 # NPS_SOURCE cambia anche la regolarizzazione, e BETA_R = 2.0 e' stato scelto sulla NPS Octopus.
-TEMPLATE_SOURCE = "fit"      # "fit" | "root"
+# TEMPLATE_SOURCE = "sim" -> AP SIMULATO (build_simAP_injected_m205.py): stessa forma dell'AP
+#   vero ma con una REALIZZAZIONE DIVERSA del rumore di template. Addestrando qui e valutando
+#   su eventi generati dall'AP vero si rompe l'auto-consistenza (cfr. paper, sez. 4.5).
+#   Quale set lo dice SIM_SOURCE, cioe' il tag nel nome del file, cioe' il tag nel nome del file
+#   (li produce build_simAP_injected_m205.py):
+#     prefisso -> da quale TEMPLATE e' generato l'AP simulato:
+#         "fit..."  dal bestfit, liscio: l'AP simulato ha solo rumore NUOVO e indipendente.
+#                   E' quello che serve per rompere l'auto-consistenza.
+#         "root..." dal medianAP, che e' gia' rumoroso: quel rumore e' identico in tutte le
+#                   tracce, la mediana non lo riduce, e l'AP simulato viene ~1.5 volte piu'
+#                   rumoroso del vero. NON e' una realizzazione indipendente: serve a misurare
+#                   l'effetto del rumore di template, non ad addestrarci sopra.
+#     suffisso -> da dove viene il RUMORE:
+#         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
+#         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
+TEMPLATE_SOURCE = "fit"      # "fit" | "root" | "sim"
+SIM_SOURCE      = "fitinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
 USE_R           = False      # True solo con "root" (vedi sopra)
+
+_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
+if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
+    raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
+                     "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
 ONLY_CHANNELS   = [91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
+SIM_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
+SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 
 # ── Sorgente della NPS ──────────────────────────────────────────────────────────────
 # "octopus": `averagepowerspectrum_noise_wp<wp>_medianpower` dal ROOT. E' una MEDIANA sugli
@@ -142,7 +171,8 @@ NPS_SOURCE  = "octopus"     # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
-_TAG        = (TEMPLATE_SOURCE + ("_R" if USE_R else "")
+_TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else "sim_" + SIM_SOURCE)
+               + ("_R" if USE_R else "")
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -169,7 +199,7 @@ WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
-JOB_NAME_PREFIX   = "BIW" + ("F" if TEMPLATE_SOURCE == "fit" else "R")   # nome job / throttling qstat
+JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
 RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
@@ -188,6 +218,13 @@ def wp_to_vbias(wp_idx: int) -> float:
 
 
 _FLATTOP_FACTOR = {}
+def template_path(channel, wp):
+    """Percorso del template esterno: il fit dello scan, oppure l'AP simulato."""
+    if TEMPLATE_SOURCE == "fit":
+        return os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
+    return os.path.join(SIM_DIR, SIM_PATTERN.format(ch=channel, wp=wp, sim=SIM_SOURCE))
+
+
 def load_nps(f, channel, wp):
     """NPS nella convenzione del codice: E|FFT(x)|^2 sull'intero spettro (WINDOW_SIZE bin)."""
     if NPS_SOURCE == "clean":
@@ -458,12 +495,11 @@ def run_worker(channel: int, wp: int):
         #    Il template viene dal fit oppure dall'AP di Octopus (TEMPLATE_SOURCE); la NPS
         #    e il numero di impulsi mediati vengono comunque dal ROOT.
         with uproot.open(filepath) as f:
-            if TEMPLATE_SOURCE == "fit":
-                fit_path = os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
-                if not os.path.exists(fit_path):
-                    raise RuntimeError(f"fit non trovato: {fit_path} "
-                                       f"(gira scan_residuals_bessel_m205.py --plot)")
-                meanpulse = np.asarray(np.load(fit_path), dtype=float)
+            if TEMPLATE_SOURCE in ("fit", "sim"):
+                tpath = template_path(channel, wp)
+                if not os.path.exists(tpath):
+                    raise RuntimeError(f"template '{TEMPLATE_SOURCE}' non trovato: {tpath}")
+                meanpulse = np.asarray(np.load(tpath), dtype=float)
             else:
                 meanpulse = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), dtype=float)
             meanpulse = meanpulse / meanpulse.max()        # picco = 1 in entrambi i casi
@@ -596,13 +632,12 @@ def run_orchestrator():
     # In modalita' "fit" servono i bestfit_ch<ch>_wp<wp>.npy dello scan: le coppie che non li
     # hanno vengono SALTATE invece di generare job destinati a fallire (lo scan puo' aver girato
     # solo su alcuni canali).
-    if TEMPLATE_SOURCE == "fit":
-        have = [(ch, wp) for (ch, wp) in tasks
-                if os.path.exists(os.path.join(FIT_DIR, FIT_PATTERN.format(ch=ch, wp=wp)))]
+    if TEMPLATE_SOURCE in ("fit", "sim"):
+        have = [(ch, wp) for (ch, wp) in tasks if os.path.exists(template_path(ch, wp))]
         if len(have) < len(tasks):
             missing_ch = sorted({ch for (ch, wp) in tasks} - {ch for (ch, wp) in have})
-            print(f"[INFO] TEMPLATE_SOURCE='fit': saltate {len(tasks)-len(have)} coppie senza fit "
-                  f"in {FIT_DIR} (canali senza fit: {missing_ch})")
+            print(f"[INFO] TEMPLATE_SOURCE='{TEMPLATE_SOURCE}': saltate {len(tasks)-len(have)} "
+                  f"coppie senza template (canali incompleti: {missing_ch})")
         tasks = have
 
     print(f"Task totali (canale, WP) da elaborare: {len(tasks)}")

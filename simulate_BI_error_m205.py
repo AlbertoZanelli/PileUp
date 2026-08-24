@@ -74,7 +74,13 @@ FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 # AP simulati prodotti da --make-ap: una sottocartella per canale.
 SIM_AP_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
 SIM_AP_PATTERN = os.path.join("ch{ch}", "simAP_{gen}_ch{ch}_wp{wp}.npy")
-SIM_AP_FROM    = "fit"      # quale AP simulato leggere quando un TEMPLATE vale "sim"
+SIM_AP_FROM    = "fitinj"   # quale AP simulato leggere quando un TEMPLATE vale "sim":
+                            # "fitinj" | "rootinj" | "fitgen" | "rootgen" (vedi
+                            # build_simAP_injected_m205.py). I vecchi "fit"/"root",
+                            # generati dalla NPS di Octopus, sono superati.
+_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
+if "sim" in (GEN_TEMPLATE, TRAIN_TEMPLATE) and SIM_AP_FROM not in _SIM_OK:
+    raise SystemExit(f"[ERROR] SIM_AP_FROM='{SIM_AP_FROM}' non valido: usare uno di {_SIM_OK}.")
 
 # ── Sorgente della NPS: deve essere LA STESSA con cui sono stati addestrati i filtri ────
 # "octopus": medianpower dal ROOT (mediana usata come media, array one-sided specchiato:
