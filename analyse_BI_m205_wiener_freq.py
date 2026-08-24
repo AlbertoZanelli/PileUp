@@ -25,7 +25,9 @@ vettori .npy nella cartella m205_results_wiener_freq/trained_filters/ (file
 f1_ch{ch}_wp{wp}.npy, f2_ch{ch}_wp{wp}.npy, lambda_ch{ch}_wp{wp}.npy,
 kernel_ch{ch}_wp{wp}.npy). Per f1/f2 e il kernel si salva solo la META'
 INDIPENDENTE dello spettro (i primi N//2+1 bin, da DC a Nyquist); il vettore completo
-si ricostruisce con full = np.concatenate([half, half[-2:0:-1]]). lambda(f) e' gia'
+si ricostruisce con full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
+    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
+    full = np.concatenate([half, np.conj(half[-2:0:-1])]). lambda(f) e' gia'
 la meta' indipendente.
 
 Stima del BI per la misura m205 (load curves), parallelizzata sul cluster:
@@ -218,7 +220,9 @@ def save_filters_npy(dirpath: str, channel, wp, f1, f2, lam_freq, kernel):
     KERNEL di Wiener W. Ogni coppia (canale, WP) scrive file con nomi distinti,
     quindi non serve alcun lock. Di f1/f2 e del kernel si salva solo la meta'
     indipendente dello spettro (N//2+1 bin); il vettore completo si ricostruisce con
-    full = np.concatenate([half, half[-2:0:-1]]). lambda(f) e' gia' la meta'
+    full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
+    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
+    full = np.concatenate([half, np.conj(half[-2:0:-1])]). lambda(f) e' gia' la meta'
     indipendente. Il filtro TOTALE applicato ai dati e' g_i = f_i * W (kernel)."""
     os.makedirs(dirpath, exist_ok=True)
     np.save(os.path.join(dirpath, f"f1_ch{channel}_wp{wp}.npy"), _independent_half(f1))

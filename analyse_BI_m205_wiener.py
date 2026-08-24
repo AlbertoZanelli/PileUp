@@ -21,7 +21,9 @@ vettori .npy in m205_results_wiener/trained_filters/ i filtri di banda ADDESTRAT
 f1, f2 e il KERNEL di Wiener W (file f1_ch{ch}_wp{wp}.npy, f2_ch{ch}_wp{wp}.npy,
 kernel_ch{ch}_wp{wp}.npy). Si salva solo la META' INDIPENDENTE dello spettro (i
 primi N//2+1 bin, da DC a Nyquist); il vettore completo si ricostruisce con
-    full = np.concatenate([half, half[-2:0:-1]]).
+    full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
+    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
+    full = np.concatenate([half, np.conj(half[-2:0:-1])]).
 Il filtro TOTALE applicato ai dati e' g_i = f_i * W (kernel).
 
 Stima del BI per la misura m205 (load curves), parallelizzata sul cluster:
@@ -69,7 +71,20 @@ import uproot        # serve all'orchestratore per elencare i WP
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
-OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_wiener")
+# ── Sorgente della NPS ──────────────────────────────────────────────────────────────
+# "octopus": `averagepowerspectrum_noise_wp<wp>_medianpower` dal ROOT. E' una MEDIANA sugli
+#   eventi usata dove serve una MEDIA, dentro un array one-sided che poi viene specchiato:
+#   misurato su ch91, vale 1.84 volte la potenza vera (2 / 1.084).
+# "clean": NPS misurata dalle finestre di rumore vere del binario (build_NPS_clean_m205.py):
+#   stessa selezione di Octopus + taglio RMS sulla finestra intera, media del periodogramma.
+#   Riproduce la RMS di finestre indipendenti entro lo 0.4%, ed e' gia' nella convenzione del
+#   codice (niente flattop, niente M^2/T). Con questa sigma scende del 18-30%.
+NPS_SOURCE  = "octopus"     # "octopus" | "clean"
+NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
+NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
+
+OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_wiener"
+                           + ("_npsclean" if NPS_SOURCE == "clean" else ""))
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
 OUTPUT_CSV  = os.path.join(OUTPUT_DIR, "BI_results_m205_wiener.csv")
@@ -113,6 +128,18 @@ def wp_to_vbias(wp_idx: int) -> float:
 
 
 _FLATTOP_FACTOR = {}
+def load_nps(f, channel, wp):
+    """NPS nella convenzione del codice: E|FFT(x)|^2 sull'intero spettro (WINDOW_SIZE bin)."""
+    if NPS_SOURCE == "clean":
+        path = os.path.join(NPS_DIR, NPS_PATTERN.format(ch=channel, wp=wp))
+        if not os.path.exists(path):
+            raise RuntimeError(f"NPS 'clean' non trovata: {path}")
+        return np.asarray(np.load(path), dtype=float)      # gia' corretta per la finestra
+    nps = np.asarray(f[f"averagepowerspectrum_noise_wp{wp}_medianpower"].values(), dtype=float)
+    nps = np.concatenate([nps, nps[-2:0:-1]])
+    return nps * flattop_power_factor(WINDOW_SIZE) * WINDOW_SIZE ** 2 / SAMPLING_TIME
+
+
 def flattop_power_factor(n: int) -> float:
     """Fattore di correzione di potenza della finestra FLATTOP usata per la NPS:
     N / sum(w^2) = 1/mean(w^2). Compensa l'attenuazione di potenza che la finestra
@@ -211,7 +238,9 @@ def save_filters_npy(dirpath: str, channel, wp, f1, f2, kernel):
     (qui il kernel di Wiener W). Ogni coppia (canale, WP) scrive file con nomi
     distinti, quindi non serve alcun lock. Si salva solo la meta' indipendente
     dello spettro (N//2+1 bin); il vettore completo si ricostruisce con
-        full = np.concatenate([half, half[-2:0:-1]]).
+        full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
+    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
+    full = np.concatenate([half, np.conj(half[-2:0:-1])]).
     Il filtro TOTALE applicato ai dati e' g_i = f_i * kernel."""
     os.makedirs(dirpath, exist_ok=True)
     np.save(os.path.join(dirpath, f"f1_ch{channel}_wp{wp}.npy"), _independent_half(f1))
@@ -343,13 +372,7 @@ def run_worker(channel: int, wp: int):
             hist_pulse = f[f"averagepulse_ap_wp{wp}_medianAP"]
             meanpulse = np.asarray(hist_pulse.values(), dtype=float)
 
-            hist_nps = f[f"averagepowerspectrum_noise_wp{wp}_medianpower"]
-            nps = np.asarray(hist_nps.values(), dtype=float)
-            nps = np.concatenate([nps, nps[-2:0:-1]])
-            
-            nps *= flattop_power_factor(WINDOW_SIZE)   # ~5.708: N/sum(w^2), finestra flattop
-            nps *= WINDOW_SIZE**2
-            nps *= (1 / SAMPLING_TIME)
+            nps = load_nps(f, channel, wp)
 
         # 4. Stima BI: riga nel CSV + filtri addestrati come .npy
         res = estimate_BI_for_wp(str(channel), wp, vbias, meanpulse, nps,

@@ -319,7 +319,10 @@ def compute_mu_sigma(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, pulse
     muY = mu1 / mu2
     var1, var2, cov12 = compute_vars(S2_over_nps, f1, f2)
     if order == 4:
-        sigmaY = compute_sigma_ratio_order4(mu1*signal_amp, mu2*signal_amp, var1**0.5, var2**0.5, cov12)
+        # compute_sigma_ratio_order4 vuole le VARIANZE (si calcola sigma = var**0.5 da solo):
+        # passargli gia' le deviazioni standard faceva una radice di troppo e mandava rho e il
+        # termine O(sigma^4) fuori scala (misurato: sigmaY 132 invece di 0.0128).
+        sigmaY = compute_sigma_ratio_order4(mu1*signal_amp, mu2*signal_amp, var1, var2, cov12)
     else:
         sigmaY = compute_sigma_ratio(mu1*signal_amp, mu2*signal_amp, var1, var2, cov12)
     if return_all:
@@ -563,8 +566,9 @@ def compute_mu_sigma_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S,
     # Noise propagation for the actual applied Wiener kernel f_i * W_unit.
     var1, var2, cov12 = compute_vars_wiener(W_unit, S, nps, f1, f2)
     if order == 4:
+        # vedi la nota in compute_mu_sigma: qui vanno le VARIANZE, non le deviazioni standard
         sigmaY = compute_sigma_ratio_order4(mu1 * signal_amp, mu2 * signal_amp,
-                                            var1 ** 0.5, var2 ** 0.5, cov12)
+                                            var1, var2, cov12)
     else:
         sigmaY = compute_sigma_ratio(mu1 * signal_amp, mu2 * signal_amp, var1, var2, cov12)
     if return_all:

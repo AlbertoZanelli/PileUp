@@ -3,7 +3,8 @@ from utility.double_beta_spectrum import inverse_cdf_ratio2b
 
 from scipy.signal import bessel, bilinear, lfilter
 
-def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, signal_scale=0.002, dt_max=8e-4):
+def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, signal_scale=0.002, dt_max=8e-4,
+                              fold_ratio=False):
     """
     Simulate frequency-domain pulse realizations with stochastic phase and noise.
 
@@ -31,6 +32,9 @@ def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, 
         Base amplitude scaling factor for the deterministic signal (default: 0.002).
     dt_max : float, optional
         Maximum random time delay (seconds) between sub-events (default: 8e-4).
+    fold_ratio : bool, optional
+        If True, fold the sharing ratio onto [0, 0.5] with r -> min(r, 1-r), i.e. the convention
+        of the analytical J (default: False, full range as sampled from the 2b distribution).
 
     Returns
     -------
@@ -49,7 +53,13 @@ def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, 
     M = S.size
 
     # --- complex Gaussian noise with spectral shape ---
-    complex_gauss = (rng.normal(size=(nsim, M)) + 1j * rng.normal(size=(nsim, M))) * np.sqrt(2)
+    # E|N_k|^2 = 2*nps_k: il rumore in frequenza NON e' hermitiano, quindi il .real dell'ifft
+    # (piu' sotto) ne dimezza la varianza e in tempo si ottiene var = sum(nps)/M^2, cioe' la
+    # convenzione in cui vale sigma_OF = 1/sqrt(sum |S|^2/nps).
+    # VERIFICATO su m205 ch91 WP15 con lo stimatore OF esatto: sigma simulata / sigma_OF = 0.99.
+    # Prima qui c'era un fattore sqrt(2) in piu' (E|N|^2 = 4*nps) che iniettava sqrt(2) di
+    # rumore di troppo, gonfiando del ~40% le larghezze e quindi il BI da simulazione.
+    complex_gauss = rng.normal(size=(nsim, M)) + 1j * rng.normal(size=(nsim, M))
     noise_freq = complex_gauss * np.sqrt(nps[None, :])  # (nsim, M)
 
     # --- deterministic signal per realization ---
@@ -58,6 +68,10 @@ def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, 
 
     # --- random energy-sharing ratios and delays ---
     generated_r = inverse_cdf_ratio2b(rng.random(nsim))
+    if fold_ratio:
+        # r e 1-r descrivono lo stesso pile-up scambiando i due eventi: ripiegando su [0, 0.5]
+        # si usa la stessa convenzione del calcolo ANALITICO (r_torch = linspace(0, 0.5, N_R)).
+        generated_r = np.minimum(generated_r, 1.0 - generated_r)
     generated_dt = rng.uniform(0, dt_max, nsim)
 
     # --- phase modulation due to inter-event timing ---
@@ -72,7 +86,8 @@ def simulate_frequency_pulses_fixed_dt_r(S, nps, w, dt ,r ,nsim=10000, seed=1234
     M = S.size
 
     # --- complex Gaussian noise with spectral shape ---
-    complex_gauss = (rng.normal(size = (nsim, M)) + 1j * rng.normal(size = (nsim, M))) * np.sqrt(2)
+    # stessa convenzione di simulate_frequency_pulses: E|N_k|^2 = 2*nps_k (vedi nota li')
+    complex_gauss = rng.normal(size = (nsim, M)) + 1j * rng.normal(size = (nsim, M))
     noise_freq = complex_gauss * np.sqrt(nps[None, :])  # (nsim, M)
     exp_term = np.exp(-1j * w * dt)  # (nsim, M)
     phase = (1 - r) + r* exp_term
