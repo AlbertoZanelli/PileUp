@@ -58,6 +58,7 @@ import fcntl
 import argparse
 import tempfile
 import subprocess
+import shutil
 
 import numpy as np   # leggero: serve per VBIAS_LIST / wp_to_vbias
 import uproot        # serve all'orchestratore per elencare i WP
@@ -401,6 +402,22 @@ def create_sh(lines: list) -> str:
     return tmp.name
 
 
+def freeze_script():
+    """Copia questo file in OUTPUT_DIR e fa puntare i job alla COPIA.
+
+    Serve perche' il job sottomesso a PBS contiene solo `python <file> --worker ...`: il file
+    viene letto QUANDO IL JOB PARTE, non quando lo si sottomette. Senza la copia, modificare
+    la config per lanciare una seconda campagna cambierebbe anche i job della prima ancora in
+    coda. Effetto collaterale utile: la cartella dei risultati contiene il codice esatto che
+    li ha prodotti."""
+    global SCRIPT_PATH
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    dst = os.path.join(OUTPUT_DIR, "_" + os.path.basename(SCRIPT_PATH))
+    shutil.copy2(SCRIPT_PATH, dst)
+    SCRIPT_PATH = dst
+    print(f"[INFO] config congelata: i job useranno {os.path.relpath(dst, BASE_DIR)}")
+
+
 def make_job_lines(channel: int, wp: int) -> list:
     """Corpo dello script di job: rilancia questo stesso file in modalità worker."""
     lines = [f"cd {BASE_DIR}"]
@@ -493,6 +510,9 @@ def run_orchestrator():
     print(f"Task totali (canale, WP) da elaborare: {len(tasks)}")
     if not tasks:
         sys.exit("[ERROR] Nessuna coppia (canale, WP) con ampiezza disponibile.")
+
+    # I job devono usare una COPIA di questo file, non l'originale: vedi freeze_script().
+    freeze_script()
 
     # ── CSV dei risultati: parte pulito (solo header) ──────────────────────────
     if RESET_CSV:

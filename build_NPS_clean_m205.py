@@ -146,34 +146,32 @@ def clean_nps(channel, wp, n_win=N_WIN, skip=0):
 def main(check=False):
     os.makedirs(OUT_DIR, exist_ok=True)
     print(f"NPS pulita da {N_WIN} finestre vere per WP -> {OUT_DIR}\n")
-    hdr = f"{'ch':>4s} {'wp':>3s} {'RMS da NPS':>11s} {'RMS vera':>10s} {'rapporto':>9s}"
-    print(hdr + (f" | {"Octopus":>8s}" if check else ""))
+    # "RMS vera" = mediana della RMS delle finestre usate, in volt: e' il termine di paragone.
+    # var(x) = sum(nps)/M^2 nella convenzione del codice, quindi il rapporto deve fare 1.00.
+    hdr = f"{'ch':>4s} {'wp':>3s} {'fin.':>5s} {'RMS da NPS':>11s} {'RMS vera':>10s} {'rapporto':>9s}"
+    print(hdr + (f"   {'val. indip.':>11s} {'Octopus':>8s}" if check else ""))
     for ch in CHANNELS:
         for wp in WPS:
             try:
-                nps, nps_med, _ = clean_nps(ch, wp)
+                nps, nps_med, win = clean_nps(ch, wp)
                 path = os.path.join(OUT_DIR, f"ch{ch}", f"nps_ch{ch}_wp{wp}.npy")
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 np.save(path, nps)
                 np.save(path.replace("nps_ch", "npsmedian_ch"), nps_med)
                 if wp in PLOT_WPS:
                     print(f"   -> {os.path.relpath(plot_nps(ch, wp, nps, nps_med), BASE_DIR)}")
-                line = f"{ch:>4d} {wp:>3d} {np.sqrt(nps.sum())/WINDOW:11.3e}"
+                rms_nps = float(np.sqrt(nps.sum()) / WINDOW)
+                rms_win = float(np.median(win.std(axis=1)))     # sulle finestre usate
+                line = (f"{ch:>4d} {wp:>3d} {len(win):>5d} {rms_nps:11.3e} "
+                        f"{rms_win:10.3e} {rms_nps/rms_win:9.3f}")
                 if check:
-                    # validazione su finestre DIVERSE (le ultime della lista)
+                    # validazione su finestre NON usate per costruire la NPS
                     amps, ts, bl = inj.wp_selection(ch, wp)
                     val = inj.noise_windows(ch, ts[len(ts)//2:], bl[len(ts)//2:], 120)
-                    rms_true = float(np.median(val.std(axis=1)))
-                    from scipy.signal.windows import flattop
-                    import uproot, glob
-                    with uproot.open(inj.root_file(ch)) as f:
-                        md = np.asarray(f[f"averagepowerspectrum_noise_wp{wp}_medianpower"].values(), float)
-                    oct_nps = (np.concatenate([md, md[-2:0:-1]]) * WINDOW / np.sum(flattop(WINDOW)**2)
-                               * WINDOW ** 2 / (WINDOW / 10_000))
-                    line += (f" {rms_true:10.3e} {np.sqrt(nps.sum())/WINDOW/rms_true:9.3f}"
-                             f" | {np.sqrt(oct_nps.sum())/WINDOW/rms_true:8.3f}")
-                else:
-                    line += f" {'-':>10s} {'-':>9s}"
+                    rms_val = float(np.median(val.std(axis=1)))
+                    oct_nps = octopus_nps(ch, wp)
+                    line += (f"   {rms_nps/rms_val:11.3f} "
+                             f"{float(np.sqrt(oct_nps.sum())/WINDOW)/rms_val:8.3f}")
                 print(line)
             except Exception as e:
                 print(f"{ch:>4d} {wp:>3d}   [ERROR] {e}")

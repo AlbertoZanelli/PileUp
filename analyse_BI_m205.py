@@ -38,6 +38,7 @@ import fcntl
 import argparse
 import tempfile
 import subprocess
+import shutil
 
 import numpy as np   # leggero: serve per VBIAS_LIST / wp_to_vbias
 import uproot        # serve all'orchestratore per elencare i WP
@@ -65,17 +66,29 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "sim"     # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "root"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 SIM_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
 SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
-# Quale set di AP simulati usare, cioe' il tag nel nome del file:
-#   "fitinj" / "rootinj" -> build_simAP_injected_m205.py, rumore VERO preso dal binario;
-#   "fit" / "root"       -> simulate_BI_error_m205.py --make-ap, rumore GENERATO dalla NPS
-#                           (1.5 volte piu' rumoroso dell'AP vero: vedi HANDOFF).
-SIM_SOURCE  = "fitinj"
+# Quale set di AP simulati usare, cioe' il tag nel nome del file
+# (li produce build_simAP_injected_m205.py):
+#   prefisso -> da quale TEMPLATE e' generato l'AP simulato:
+#       "fit..."  dal bestfit, liscio: l'AP simulato ha solo rumore NUOVO e indipendente.
+#                 E' quello che serve per rompere l'auto-consistenza.
+#       "root..." dal medianAP, che e' gia' rumoroso: quel rumore e' identico in tutte le
+#                 tracce, la mediana non lo riduce, e l'AP simulato viene ~1.5 volte piu'
+#                 rumoroso del vero. NON e' una realizzazione indipendente: serve a misurare
+#                 l'effetto del rumore di template, non ad addestrarci sopra.
+#   suffisso -> da dove viene il RUMORE:
+#       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
+#       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
+SIM_SOURCE  = "fitinj"      # "fitinj" | "rootinj" | "fitgen" | "rootgen"
+_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
+if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
+    raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
+                     "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # ── Sorgente della NPS ──────────────────────────────────────────────────────────────
 # "octopus": `averagepowerspectrum_noise_wp<wp>_medianpower` dal ROOT, come sempre. E' una
@@ -85,12 +98,12 @@ SIM_SOURCE  = "fitinj"
 #   (stessa selezione di Octopus + taglio RMS sulla finestra intera, media del periodogramma).
 #   Riproduce la RMS di finestre indipendenti entro lo 0.4%. E' gia' nella convenzione giusta:
 #   niente flattop, niente M^2/T. Con questa sigma scende del 18-30% e il BI cala.
-NPS_SOURCE  = "octopus"     # "octopus" | "clean"
+NPS_SOURCE  = "clean"       # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [91, 34]
+ONLY_CHANNELS = [31, 34, 71, 83, 91]
 
 _TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
@@ -423,6 +436,22 @@ def create_sh(lines: list) -> str:
     return tmp.name
 
 
+def freeze_script():
+    """Copia questo file in OUTPUT_DIR e fa puntare i job alla COPIA.
+
+    Serve perche' il job sottomesso a PBS contiene solo `python <file> --worker ...`: il file
+    viene letto QUANDO IL JOB PARTE, non quando lo si sottomette. Senza la copia, modificare
+    la config per lanciare una seconda campagna cambierebbe anche i job della prima ancora in
+    coda. Effetto collaterale utile: la cartella dei risultati contiene il codice esatto che
+    li ha prodotti."""
+    global SCRIPT_PATH
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    dst = os.path.join(OUTPUT_DIR, "_" + os.path.basename(SCRIPT_PATH))
+    shutil.copy2(SCRIPT_PATH, dst)
+    SCRIPT_PATH = dst
+    print(f"[INFO] config congelata: i job useranno {os.path.relpath(dst, BASE_DIR)}")
+
+
 def make_job_lines(channel: int, wp: int) -> list:
     """Corpo dello script di job: rilancia questo stesso file in modalità worker."""
     lines = [f"cd {BASE_DIR}"]
@@ -530,6 +559,9 @@ def run_orchestrator():
     print(f"Task totali (canale, WP) da elaborare: {len(tasks)}")
     if not tasks:
         sys.exit("[ERROR] Nessuna coppia (canale, WP) con ampiezza disponibile.")
+
+    # I job devono usare una COPIA di questo file, non l'originale: vedi freeze_script().
+    freeze_script()
 
     # ── CSV dei risultati: parte pulito (solo header) ──────────────────────────
     if RESET_CSV:

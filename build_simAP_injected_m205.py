@@ -195,10 +195,10 @@ def build(channel, wp, sources):
 
 
 def main():
-    print(f"AP simulati per iniezione su rumore vero -> {OUT_DIR}")
-    print(f"rumore '{NOISE_SOURCE}'" + (", tagli di Octopus (cuts_noise_amplitude) del WP + taglio RMS"
-          if NOISE_SOURCE == "real" else ", generato dalla NPS misurata") +
-          f", ampiezze '{AMP_MODE}', jitter {JITTER}\n")
+    print(f"AP simulati -> {OUT_DIR}")
+    print("rumore: " + ("finestre VERE dal binario (tagli di Octopus + taglio RMS)"
+                        if NOISE_SOURCE == "real" else "GENERATO dalla NPS misurata") +
+          f"; ampiezze '{AMP_MODE}', jitter {JITTER}\n")
     print(f"{'ch':>4s} {'wp':>3s} {'N':>3s} {'finestre':>9s} | {'rms rumore':>11s} {'rms veri':>10s} "
           f"{'rapporto':>9s} | " + " ".join(f"{'AP ' + s:>10s}" for s in TEMPLATES) + f" {'AP vero':>10s}")
     for ch in CHANNELS:
