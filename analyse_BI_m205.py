@@ -51,6 +51,11 @@ import uproot        # serve all'orchestratore per elencare i WP
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
+
+# La copia congelata da freeze_script() gira da un'altra cartella, quindi sys.path[0] non e'
+# la radice del progetto e `import src.analysis` fallirebbe: si aggiunge BASE_DIR a mano.
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -66,7 +71,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "root"    # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -103,7 +108,7 @@ NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [31, 34, 71, 83, 91]
+ONLY_CHANNELS = [34]
 
 _TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
@@ -447,7 +452,18 @@ def freeze_script():
     global SCRIPT_PATH
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     dst = os.path.join(OUTPUT_DIR, "_" + os.path.basename(SCRIPT_PATH))
-    shutil.copy2(SCRIPT_PATH, dst)
+    src = open(SCRIPT_PATH).read()
+    # La copia sta in un'altra cartella, quindi os.path.dirname(__file__) darebbe la cartella
+    # dei risultati e TUTTI i percorsi (Processed/, fit, AP simulati, NPS) punterebbero li'.
+    # Si congela BASE_DIR al valore vero.
+    src, n = re.subn(r"^BASE_DIR(\s*)= os\.path\.dirname\(os\.path\.abspath\(__file__\)\)",
+                     lambda m: f'BASE_DIR{m.group(1)}= {BASE_DIR!r}'
+                               '   # congelato da freeze_script(): la copia sta altrove',
+                     src, count=1, flags=re.M)
+    if n != 1:
+        raise RuntimeError("freeze_script: non trovo la riga di BASE_DIR da congelare")
+    with open(dst, "w") as fh:
+        fh.write(src)
     SCRIPT_PATH = dst
     print(f"[INFO] config congelata: i job useranno {os.path.relpath(dst, BASE_DIR)}")
 

@@ -110,6 +110,11 @@ import uproot        # serve all'orchestratore per elencare i WP
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
+
+# La copia congelata da freeze_script() gira da un'altra cartella, quindi sys.path[0] non e'
+# la radice del progetto e `import src.analysis` fallirebbe: si aggiunge BASE_DIR a mano.
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -143,7 +148,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #     suffisso -> da dove viene il RUMORE:
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-TEMPLATE_SOURCE = "fit"      # "fit" | "root" | "sim"
+TEMPLATE_SOURCE = "root"      # "fit" | "root" | "sim"
 SIM_SOURCE      = "fitinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
 USE_R           = False      # True solo con "root" (vedi sopra)
 
@@ -153,7 +158,7 @@ if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
                      "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [91]
+ONLY_CHANNELS   = [34]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -168,7 +173,7 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   stessa selezione di Octopus + taglio RMS sulla finestra intera, media del periodogramma.
 #   Riproduce la RMS di finestre indipendenti entro lo 0.4%, ed e' gia' nella convenzione del
 #   codice (niente flattop, niente M^2/T). Con questa sigma scende del 18-30%.
-NPS_SOURCE  = "octopus"     # "octopus" | "clean"
+NPS_SOURCE  = "clean"     # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
@@ -548,7 +553,18 @@ def freeze_script():
     global SCRIPT_PATH
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     dst = os.path.join(OUTPUT_DIR, "_" + os.path.basename(SCRIPT_PATH))
-    shutil.copy2(SCRIPT_PATH, dst)
+    src = open(SCRIPT_PATH).read()
+    # La copia sta in un'altra cartella, quindi os.path.dirname(__file__) darebbe la cartella
+    # dei risultati e TUTTI i percorsi (Processed/, fit, AP simulati, NPS) punterebbero li'.
+    # Si congela BASE_DIR al valore vero.
+    src, n = re.subn(r"^BASE_DIR(\s*)= os\.path\.dirname\(os\.path\.abspath\(__file__\)\)",
+                     lambda m: f'BASE_DIR{m.group(1)}= {BASE_DIR!r}'
+                               '   # congelato da freeze_script(): la copia sta altrove',
+                     src, count=1, flags=re.M)
+    if n != 1:
+        raise RuntimeError("freeze_script: non trovo la riga di BASE_DIR da congelare")
+    with open(dst, "w") as fh:
+        fh.write(src)
     SCRIPT_PATH = dst
     print(f"[INFO] config congelata: i job useranno {os.path.relpath(dst, BASE_DIR)}")
 

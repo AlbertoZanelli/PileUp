@@ -1,0 +1,29 @@
+Currently Loaded Modulefiles:
+ 1) cmake/3.31.4   3) fftw/3.3.10    5) gsl/2.8        
+ 2) gcc/15.2.0     4) root/6.32.04   6) python/3.12.3  
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/numpy/linalg/_linalg.py:2767: RuntimeWarning: overflow encountered in dot
+  sqnorm = x.dot(x)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:112: RuntimeWarning: overflow encountered in square
+  denom = s**2 + alpha
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:115: RuntimeWarning: overflow encountered in square
+  phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:115: RuntimeWarning: overflow encountered in power
+  phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:115: RuntimeWarning: invalid value encountered in divide
+  phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:161: RuntimeWarning: overflow encountered in square
+  p = -V.dot(suf / (s**2 + alpha))
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:398: RuntimeWarning: invalid value encountered in cast
+  return min_step, np.equal(steps, min_step) * np.sign(s).astype(int)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:282: RuntimeWarning: overflow encountered in dot
+  v = J.dot(s)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:285: RuntimeWarning: overflow encountered in multiply
+  a += np.dot(s * diag, s)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:285: RuntimeWarning: overflow encountered in dot
+  a += np.dot(s * diag, s)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:288: RuntimeWarning: overflow encountered in dot
+  b = np.dot(g, s)
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:316: RuntimeWarning: invalid value encountered in scalar divide
+  extremum = -0.5 * b / a
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:320: RuntimeWarning: invalid value encountered in multiply
+  y = t * (a * t + b) + c

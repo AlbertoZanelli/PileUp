@@ -27,12 +27,26 @@ Uso:
 """
 
 import os
+import sys
+import re
 import csv
 import glob
+import time
+import fcntl
+import tempfile
+import subprocess
 
 import numpy as np
 import uproot
 import torch
+
+# BASE_DIR va definito QUI, prima degli import di src/utility: eseguendo la copia congelata
+# da freeze_script(), che sta nella cartella dei risultati, sys.path[0] e' quella cartella e
+# `import src.analysis` fallirebbe. E' anche l'UNICA riga che freeze_script riscrive, quindi
+# non va duplicata piu' in basso.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 import src.analysis as an
 import src.dataset as ds
@@ -42,7 +56,7 @@ import utility.functions as fn
 # ═════════════════════════════════════════════════════════════════════════════
 # CONFIGURAZIONE
 # ═════════════════════════════════════════════════════════════════════════════
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_PATH = os.path.abspath(__file__)      # BASE_DIR e' definito in cima, con gli import
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME   = "000205"
 
@@ -61,7 +75,7 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_octopus"
+RESULTS_NAME = "m205_results_wiener_sim_fitinj_npsclean"
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -69,7 +83,7 @@ RESULTS_NAME = "m205_results_octopus"
 #    E' l'UNICA scelta libera: se coincide con il template del training il conto e'
 #    auto-consistente e serve solo da validazione; se differisce, misuri quanto costa
 #    addestrare sul template sbagliato.
-GEN_TEMPLATE = "root"       # "root" | "fit"
+GEN_TEMPLATE = "fit"       # "root" | "fit"
 
 # Il rumore degli eventi e' SEMPRE generato (400-600 finestre vere per WP non bastano per
 # NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.
@@ -128,6 +142,10 @@ ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
 
 # Parametri della simulazione (gli stessi del calcolo analitico in analyse_BI_m205.py)
 NSIM        = 20_000        # eventi per popolazione; l'errore MC scala come 1/sqrt(NSIM)
+CHUNK       = 2_000         # eventi generati per volta. simulate_frequency_pulses alloca sei
+                            # array (n, 10000) COMPLESSI: a n=20000 sono 3.2 GB l'uno, ~19 GB in
+                            # tutto, e il processo viene ucciso dall'OOM killer. Generando a
+                            # blocchi il picco scende come CHUNK/NSIM (a 1000: ~1 GB).
 SEED        = 1234
 ACCEPTANCE  = 0.9
 T_MAX       = 8e-4          # ritardo massimo del pile-up [s] (= T_MAX del BI analitico)
@@ -152,6 +170,27 @@ SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
 
 PLOT = [(91, 15)]           # coppie (canale, WP) per cui disegnare le distribuzioni; [] = nessuna
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Esecuzione: un job per coppia (canale, WP), come in analyse_BI_m205.py
+# ═════════════════════════════════════════════════════════════════════════════
+# Orchestratore (default): enumera le coppie, sottomette un job per ciascuna e termina.
+# Worker (--worker --channel C --wp W): esegue UNA coppia e appende la sua riga al CSV.
+SUBMIT_MODE       = "qsub"    # "qsub" = un job per coppia ; "local" = in sequenza (debug)
+QUEUE             = "cupid"
+WALLTIME          = "24:00:00"
+RAM_GB            = 4         # con CHUNK=1000 il picco misurato e' ~1.5 GB
+MAX_PARALLEL_JOBS = 100
+SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
+JOB_NAME_PREFIX   = "MC"      # nome job / throttling via qstat
+EXPORT_ENV        = True      # "-V" al qsub: esporta l'ambiente corrente
+RESET_CSV         = True      # l'orchestratore riparte da un CSV pulito (solo header)
+ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
+LOG_DIR           = os.path.join(RESULTS_DIR, "logs_mc")
+JOBS_DIR          = os.path.join(RESULTS_DIR, "jobs_mc")
+
+CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "train", "nps", "filter", "BI_analytic",
+                  "BI_mc", "sigma_BI", "rp", "sigma_rp", "nsim", "ratio"]
 
 
 def flattop_power_factor(n: int) -> float:
@@ -228,15 +267,29 @@ def load_row_inputs(channel, wp):
 
 def simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, dt_max, seed):
     """PSD (parametro di forma) di NSIM eventi simulati: dt_max=0 -> impulsi SINGOLI,
-    dt_max>0 -> PILE-UP. Il rumore e' generato con lo spettro nps del canale."""
-    fpulses, *_ = sim.simulate_frequency_pulses(S, nps, DETECTOR_SIGMA, w, nsim=NSIM, seed=seed,
-                                                signal_scale=signal_amp, dt_max=dt_max,
-                                                fold_ratio=FOLD_RATIO)
-    pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
-    dataset = ds.NumpyDataset(pulses)
-    dataset.win_length = pulses.shape[1]        # get_PSD_interpole legge win_length dal dataset
-    psd, _, _ = an.get_PSD_interpole(dataset, H_unit, f1, f2)
-    return np.asarray(psd).ravel()
+    dt_max>0 -> PILE-UP. Il rumore e' generato con lo spettro nps del canale.
+
+    Si genera a BLOCCHI di CHUNK eventi: il generatore alloca sei array (n, 10000) complessi,
+    quindi a NSIM intero il processo viene ucciso per memoria. Il seed di ogni blocco e'
+    seed + indice del blocco, cosi' con PAIRED_NOISE singoli e pile-up restano appaiati blocco
+    per blocco (stesso rumore, stessa ampiezza, stesso rapporto r)."""
+    out = []
+    done = 0
+    for k in range(0, NSIM, CHUNK):
+        n = min(CHUNK, NSIM - k)
+        fpulses, *_ = sim.simulate_frequency_pulses(S, nps, DETECTOR_SIGMA, w, nsim=n,
+                                                    seed=seed + k // CHUNK,
+                                                    signal_scale=signal_amp, dt_max=dt_max,
+                                                    fold_ratio=FOLD_RATIO)
+        pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
+        del fpulses
+        dataset = ds.NumpyDataset(pulses)
+        dataset.win_length = pulses.shape[1]    # get_PSD_interpole legge win_length dal dataset
+        psd, _, _ = an.get_PSD_interpole(dataset, H_unit, f1, f2)
+        out.append(np.asarray(psd).ravel())
+        del pulses, dataset
+        done += n
+    return np.concatenate(out)
 
 
 def train_kernel(channel, wp, nps, row):
@@ -356,6 +409,137 @@ def make_sim_ap(rows, gen):
             print(f"{ch:>4d} {wp:>3d}   {tag} {e}")
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# CSV condiviso fra i job
+# ═════════════════════════════════════════════════════════════════════════════
+def init_csv(path):
+    """Crea il CSV (sovrascrivendolo) con la sola riga di header."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", newline="") as f:
+        csv.DictWriter(f, fieldnames=CSV_FIELDNAMES).writeheader()
+
+
+def append_row_to_csv(path, row):
+    """Appende una riga in modo sicuro fra processi concorrenti (flock)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", newline="") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            w = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+            if f.tell() == 0:
+                w.writeheader()
+            w.writerow({k: row.get(k) for k in CSV_FIELDNAMES})
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Orchestratore: un job per coppia (canale, WP)
+# ═════════════════════════════════════════════════════════════════════════════
+def freeze_script():
+    """Copia questo file in RESULTS_DIR e fa puntare i job alla COPIA, con BASE_DIR congelato.
+
+    Il job contiene solo `python <file> --worker ...`, letto QUANDO IL JOB PARTE: senza la
+    copia, cambiare la config per lanciare un'altra campagna toccherebbe anche i job ancora
+    in coda. La copia sta in un'altra cartella, quindi os.path.dirname(__file__) darebbe la
+    cartella dei risultati: BASE_DIR va congelato al valore vero."""
+    global SCRIPT_PATH
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    dst = os.path.join(RESULTS_DIR, "_" + os.path.basename(SCRIPT_PATH))
+    src, n = re.subn(r"^BASE_DIR(\s*)= os\.path\.dirname\(os\.path\.abspath\(__file__\)\)",
+                     lambda m: f'BASE_DIR{m.group(1)}= {BASE_DIR!r}'
+                               '   # congelato da freeze_script(): la copia sta altrove',
+                     open(SCRIPT_PATH).read(), count=1, flags=re.M)
+    if n != 1:
+        raise RuntimeError("freeze_script: non trovo la riga di BASE_DIR da congelare")
+    with open(dst, "w") as fh:
+        fh.write(src)
+    SCRIPT_PATH = dst
+    print(f"[INFO] config congelata: i job useranno {os.path.relpath(dst, BASE_DIR)}")
+
+
+def make_job_lines(channel, wp):
+    """Corpo dello script di job: rilancia questo stesso file in modalita' worker."""
+    return [f"cd {BASE_DIR}"] + ENV_SETUP_LINES + [
+        f"{sys.executable} {SCRIPT_PATH} --worker --channel {channel} --wp {wp}"]
+
+
+def create_sh(lines):
+    os.makedirs(JOBS_DIR, exist_ok=True)
+    fd, path = tempfile.mkstemp(suffix=".sh", dir=JOBS_DIR)
+    with os.fdopen(fd, "w") as f:
+        f.write("#!/bin/bash\n" + "\n".join(lines) + "\n")
+    os.chmod(path, 0o755)
+    return path
+
+
+def running_job_count():
+    user = os.environ.get("USER", "")
+    try:
+        r = subprocess.run(f"qstat -u {user} | grep '{JOB_NAME_PREFIX}' | wc -l",
+                           shell=True, capture_output=True, text=True)
+        return int(r.stdout.strip() or 0)
+    except Exception as e:
+        print("[WARN] qstat fallito:", e)
+        return 0
+
+
+def wait_for_slot():
+    while running_job_count() >= MAX_PARALLEL_JOBS:
+        print(f"Max job paralleli ({MAX_PARALLEL_JOBS}). Attendo {SLEEP_INTERVAL}s...")
+        time.sleep(SLEEP_INTERVAL)
+
+
+def submit_task(task_key, sh_file):
+    job_name = f"{JOB_NAME_PREFIX}{task_key}"[:15]     # PBS limita la lunghezza del nome
+    cmd = (f"qsub -N {job_name} {'-V ' if EXPORT_ENV else ''}-q {QUEUE} "
+           f"-o localhost:{LOG_DIR}/ -e localhost:{LOG_DIR}/ "
+           f"-l walltime={WALLTIME} -l mem={RAM_GB}G {sh_file}")
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    except Exception as e:
+        print(f"[ERROR] eccezione su qsub per {task_key}: {e}")
+        return None
+    if r.returncode != 0:
+        print(f"[ERROR] qsub fallito per {task_key}. stderr:\n{r.stderr}")
+        return None
+    jobid = (r.stdout.strip() or "").split(".")[0]
+    if not jobid.isdigit():
+        print(f"[ERROR] job id non valido per {task_key}: '{r.stdout.strip()}'")
+        return None
+    print(f"[OK] sottomesso {task_key} (job {jobid})")
+    return jobid
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Worker: UNA coppia (canale, WP)
+# ═════════════════════════════════════════════════════════════════════════════
+def run_worker(channel, wp):
+    rows = [r for r in csv.DictReader(open(BI_CSV))
+            if int(r["channel"]) == channel and int(r["wp"]) == wp]
+    if not rows:
+        print(f"[ERROR] ch {channel} wp {wp}: riga non trovata in {BI_CSV}")
+        return
+    r = rows[0]
+    bi_an = float(r["BI"])
+    try:
+        res = run_pair(channel, wp, r)
+    except Exception as e:
+        print(f"[ERROR] ch {channel} wp {wp}: {e}")
+        return
+    append_row_to_csv(OUT_CSV, dict(
+        channel=channel, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE, train=TRAIN_TEMPLATE,
+        nps=NPS_SOURCE, filter=FILTER_TYPE, BI_analytic=bi_an, BI_mc=res["BI_mc"],
+        sigma_BI=res["sigma_BI"], rp=res["rp"], sigma_rp=res["sigma_rp"], nsim=NSIM,
+        ratio=res["BI_mc"] / bi_an))
+    if (channel, wp) in PLOT:
+        plot_pair(channel, wp, res, bi_an)
+    print(f"[OK] ch {channel} wp {wp}: BI_mc={res['BI_mc']:.4e} +- {res['sigma_BI']:.1e} "
+          f"(analitico {bi_an:.4e}, rapporto {res['BI_mc']/bi_an:.3f})  ->  {OUT_CSV}")
+
+
 def select_rows():
     rows = list(csv.DictReader(open(BI_CSV)))
     if ONLY_CHANNELS:
@@ -374,7 +558,17 @@ def main():
                         help="genera gli AP SIMULATI (stesso N dell'originale) invece del BI. "
                              "Uno o piu' template di generazione, es. --make-ap root fit "
                              "(default: GEN_TEMPLATE)")
+    ap_arg.add_argument("--worker", action="store_true",
+                        help="esegue UNA coppia (canale, WP): e' cosi' che partono i job")
+    ap_arg.add_argument("--channel", type=int, help="canale (richiesto con --worker)")
+    ap_arg.add_argument("--wp", type=int, help="working point (richiesto con --worker)")
     args = ap_arg.parse_args()
+
+    if args.worker:
+        if args.channel is None or args.wp is None:
+            sys.exit("[ERROR] --worker richiede --channel e --wp")
+        run_worker(args.channel, args.wp)
+        return
 
     rows = select_rows()
     if args.make_ap is not None:
@@ -388,36 +582,54 @@ def main():
     print(f"  eventi generati da '{GEN_TEMPLATE}'"
           + ("  [auto-consistente: e' anche il template del training]"
              if GEN_TEMPLATE == TRAIN_TEMPLATE else "  [incrociato]"))
-    print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, paired_noise={PAIRED_NOISE}, "
-          f"fold_ratio={FOLD_RATIO}, detector_sigma={DETECTOR_SIGMA}\n")
+    print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, chunk={CHUNK}, "
+          f"paired_noise={PAIRED_NOISE}, fold_ratio={FOLD_RATIO}, "
+          f"detector_sigma={DETECTOR_SIGMA}\n")
 
-    out = []
-    print(f"{'ch':>4s} {'wp':>3s} {'BI analitico':>13s} {'BI Monte Carlo':>16s} "
-          f"{'sigma_BI':>10s} {'MC/analitico':>13s}")
-    for r in rows:
-        ch, wp = int(r["channel"]), int(r["wp"])
-        bi_an = float(r["BI"])
-        try:
-            res = run_pair(ch, wp, r)
-        except Exception as e:
-            print(f"{ch:>4d} {wp:>3d}   [ERROR] {e}")
-            continue
-        print(f"{ch:>4d} {wp:>3d} {bi_an:13.4e} {res['BI_mc']:11.4e} ± {res['sigma_BI']:.1e} "
-              f"{res['sigma_BI']:10.1e} {res['BI_mc']/bi_an:12.3f}")
-        out.append(dict(channel=ch, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE,
-                        train=TRAIN_TEMPLATE, BI_analytic=bi_an,
-                        BI_mc=res["BI_mc"], sigma_BI=res["sigma_BI"], rp=res["rp"],
-                        sigma_rp=res["sigma_rp"], nsim=NSIM, ratio=res["BI_mc"] / bi_an))
-        if (ch, wp) in PLOT:
-            plot_pair(ch, wp, res, bi_an)
+    tasks = [(int(r["channel"]), int(r["wp"])) for r in rows]
 
-    fields = ["channel", "wp", "vbias", "gen", "train", "BI_analytic", "BI_mc", "sigma_BI", "rp", "sigma_rp",
-              "nsim", "ratio"]
-    with open(OUT_CSV, "w", newline="") as f:
-        wcsv = csv.DictWriter(f, fieldnames=fields)
-        wcsv.writeheader()
-        wcsv.writerows(out)
-    print(f"\n-> {OUT_CSV}")
+    if SUBMIT_MODE == "local":
+        print("[INFO] SUBMIT_MODE='local': eseguo i task in sequenza (no qsub).\n")
+        if RESET_CSV:
+            init_csv(OUT_CSV)
+        for ch, wp in tasks:
+            run_worker(ch, wp)
+        print(f"\nFatto. Risultati in {OUT_CSV}")
+        return
+
+    # Le cartelle devono esistere PRIMA del qsub: PBS scrive stdout/stderr in LOG_DIR e se
+    # non c'e' il job va subito in stato di errore senza eseguire niente.
+    for d in (RESULTS_DIR, LOG_DIR, JOBS_DIR):
+        os.makedirs(d, exist_ok=True)
+
+    # I job devono usare una COPIA di questo file, non l'originale: vedi freeze_script().
+    freeze_script()
+    if RESET_CSV:
+        init_csv(OUT_CSV)
+
+    submitted, failed = 0, []
+    for ch, wp in tasks:
+        wait_for_slot()
+        task_key = f"{ch}_{wp}"
+        jobid = None
+        for _ in range(3):                     # retry per errori transitori di qsub
+            jobid = submit_task(task_key, create_sh(make_job_lines(ch, wp)))
+            if jobid is not None:
+                break
+            time.sleep(SLEEP_INTERVAL)
+        if jobid is not None:
+            submitted += 1
+        else:
+            failed.append(task_key)
+            print(f"[WARN] impossibile sottomettere {task_key} dopo 3 tentativi.")
+
+    print("\n" + "=" * 65)
+    print(f"  {submitted}/{len(tasks)} job sottomessi.")
+    if failed:
+        print(f"  {len(failed)} NON sottomessi: {failed}")
+    print(f"  Ogni job scrivera' la sua riga in: {OUT_CSV}")
+    print(f"  Log dei job in: {LOG_DIR}")
+    print("=" * 65 + "\n")
 
 
 if __name__ == "__main__":

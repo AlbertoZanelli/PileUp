@@ -37,18 +37,21 @@ import matplotlib.pyplot as plt
 # Config
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-NPS_TAG  = ""            # "" (NPS di Octopus) oppure "_npsclean": si appende a tutte le cartelle
+NPS_TAG  = "_npsclean"            # "" (NPS di Octopus) oppure "_npsclean": si appende a tutte le cartelle
 
-SETS = [("root",        "m205_results_octopus"),
-        ("fit",         "m205_results_octopus_fit"),
-        ("sim rootinj", "m205_results_octopus_sim_rootinj"),
-        ("sim fitinj",  "m205_results_octopus_sim_fitinj")]
+SETS = [("root",        "m205_results_wiener"),
+        ("fit",         "m205_results_wiener_fit"),
+        ("sim rootinj", "m205_results_wiener_sim_rootinj"),
+        ("sim fitinj",  "m205_results_wiener_sim_fitinj")]
 PAIRS = [("root", "sim rootinj"), ("fit", "sim fitinj")]
 REFERENCE = "root"       # set rispetto a cui si misurano rapporti e distanze fra filtri
 
 BI_SOURCE = "mc"         # "mc" = BI Monte Carlo con barre d'errore ; "analytic" = BI analitico
-FILTER_WPS = [15]        # WP per cui disegnare i filtri in dettaglio
-OUT_DIR  = os.path.join(BASE_DIR, "comparisons", "templates" + NPS_TAG)
+GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
+# La cartella di output nomina le CARTELLE confrontate (non solo le etichette), cosi'
+# convivono confronti fra set diversi: filtro ottimo, Wiener, NPS pulita, combinazioni.
+OUT_DIR  = os.path.join(BASE_DIR, "comparisons",
+                        "-".join(f.replace("m205_results_", "") + NPS_TAG for _, f in SETS))
 COLORS   = {"root": "tab:blue", "fit": "tab:green",
             "sim rootinj": "tab:orange", "sim fitinj": "tab:red"}
 SAMPLING_RATE = 10_000
@@ -122,10 +125,10 @@ def load_filters(rec, ch, wp):
 # ═════════════════════════════════════════════════════════════════════════════
 # Figure
 # ═════════════════════════════════════════════════════════════════════════════
-def plot_bi(data, channel, keys):
+def plot_bi(data, channel, keys, tag):
     """BI vs V_bias per i quattro set, piu' la compatibilita' dentro ogni coppia."""
-    fig, ax = plt.subplots(2, 1, figsize=(9, 7.5), sharex=True,
-                           gridspec_kw={"height_ratios": [2.2, 1]})
+    fig, ax = plt.subplots(3, 1, figsize=(9, 9.5), sharex=True,
+                           gridspec_kw={"height_ratios": [2.4, 1, 1]})
     for lab in keys:
         v, b, e = [], [], []
         for (c, wp), rec in sorted(data[lab].items()):
@@ -153,25 +156,40 @@ def plot_bi(data, channel, keys):
     for a, b in PAIRS:
         if a not in keys or b not in keys:
             continue
-        v, z = [], []
+        v, z, vd, d = [], [], [], []
         for (c, wp), rec in sorted(data[a].items()):
             if c != channel or (c, wp) not in data[b]:
                 continue
             zz = significance(rec, data[b][(c, wp)])
-            if zz is None:
-                continue
-            v.append(rec["vbias"]); z.append(zz)
+            if zz is not None:
+                v.append(rec["vbias"]); z.append(zz)
+            ba, _ = value(rec)
+            bb, _ = value(data[b][(c, wp)])
+            if ba:
+                vd.append(rec["vbias"]); d.append(100.0 * (bb - ba) / ba)
         if v:
             ax[1].plot(v, z, "o-", ms=4, lw=1, color=COLORS[b], label=f"{b} vs {a}")
+        if vd:
+            ax[2].plot(vd, d, "o-", ms=4, lw=1, color=COLORS[b], label=f"{b} vs {a}")
     for k, c in ((1, "0.6"), (2, "0.8")):
         ax[1].axhspan(-k, k, color=c, alpha=0.25, zorder=0)
     ax[1].axhline(0, color="k", lw=0.8)
-    ax[1].set_ylabel(r"z = $\Delta$BI / $\sigma_{MC}$"); ax[1].set_xlabel("V bias [V]")
-    ax[1].legend(fontsize=8); ax[1].grid(True, ls="--", alpha=0.4)
+    ax[1].set_ylabel(r"z = $\Delta$BI / $\sigma_{MC}$")
+    ax[2].axhline(0, color="k", lw=0.8)
+    ax[2].set_ylabel(r"$\Delta$BI  [%]"); ax[2].set_xlabel("V bias [V]")
+    for a in ax[1:]:
+        if a.get_legend_handles_labels()[0]:      # niente coppie disegnate -> niente legenda
+            a.legend(fontsize=8)
+        a.grid(True, ls="--", alpha=0.4)
     fig.tight_layout()
-    out = os.path.join(OUT_DIR, f"BI_vs_vbias_ch{channel}.png")
+    out = os.path.join(OUT_DIR, f"BI_vs_vbias_ch{channel}_{tag}.png")
     fig.savefig(out, dpi=130); plt.close(fig)
     return out
+
+
+def sets_tag(keys):
+    """Identifica il confronto, cosi' due confronti diversi non si sovrascrivono i file."""
+    return "_".join(l.replace(" ", "") for l in keys) + NPS_TAG
 
 
 def smooth(y, size=51):
@@ -181,80 +199,72 @@ def smooth(y, size=51):
     return median_filter(np.asarray(y, dtype=float), size=size, mode="nearest")
 
 
-def plot_filters(data, channel, wp, keys):
-    """f1 e f2 dei quattro set sovrapposti, piu' il rapporto rispetto al set di riferimento."""
+def total_filter(rec, ch, wp, which):
+    """Filtro TOTALE applicato ai dati: g_i = f_i * kernel, meta' indipendente dello spettro.
+
+    Sia i filtri di banda sia il kernel sono salvati come meta' indipendente (DC..Nyquist),
+    quindi il prodotto si fa direttamente li'. Si restituisce |g_i|: la fase non serve al
+    confronto e per il filtro ottimo e' comunque quella di S*."""
+    d = os.path.join(rec["dir"], "trained_filters")
+    paths = [os.path.join(d, f"{n}_ch{ch}_wp{wp}.npy") for n in (which, "kernel")]
+    if not all(os.path.exists(x) for x in paths):
+        return None
+    f, k = (np.load(x).ravel() for x in paths)
+    n = min(len(f), len(k))
+    return np.abs(f[:n] * k[:n])
+
+
+def plot_total_filters(data, channel, which, keys, tag):
+    """Una griglia per canale e per filtro: un pannello per WP, dentro i quattro set."""
+    wps = sorted({wp for lab in keys for (c, wp) in data[lab] if c == channel})
+    if not wps:
+        return None
+    rows, cols = GRID
+    fig, axes = plt.subplots(rows, cols, figsize=(4.6 * cols, 3.1 * rows),
+                             sharex=True, squeeze=False)
     fr = np.fft.rfftfreq(WINDOW, 1 / SAMPLING_RATE)
-    ref = load_filters(data[REFERENCE][(channel, wp)], channel, wp) \
-        if REFERENCE in keys and (channel, wp) in data[REFERENCE] else None
-    fig, ax = plt.subplots(2, 2, figsize=(13, 7.5), sharex=True)
     drawn = False
-    for lab in keys:
-        rec = data[lab].get((channel, wp))
-        f = load_filters(rec, channel, wp) if rec else None
-        if f is None:
-            continue
-        drawn = True
-        for i in (0, 1):
-            n = min(len(fr), len(f[i]))
-            y = np.abs(f[i][1:n])
-            # i filtri addestrati sono frastagliati bin per bin: la curva grezza resta in
-            # trasparenza, quella lisciata (mediana mobile) e' l'unica leggibile nel rapporto.
-            ax[0][i].semilogx(fr[1:n], y, lw=0.4, alpha=0.25, color=COLORS[lab])
-            ax[0][i].semilogx(fr[1:n], smooth(y), lw=1.3, color=COLORS[lab], label=lab)
-            if ref is not None:
-                r = y / np.abs(ref[i][1:n])
-                ax[1][i].semilogx(fr[1:n], r, lw=0.4, alpha=0.2, color=COLORS[lab])
-                ax[1][i].semilogx(fr[1:n], smooth(r), lw=1.3, color=COLORS[lab])
+    top, bot = 0.0, np.inf          # estremi su tutta la griglia, per una scala y comune
+    for a, wp in zip(axes.ravel(), wps):
+        for lab in keys:
+            rec = data[lab].get((channel, wp))
+            g = total_filter(rec, channel, wp, which) if rec else None
+            if g is None:
+                continue
+            drawn = True
+            n = min(len(fr), len(g))
+            # i filtri addestrati sono frastagliati bin per bin: grezzo in trasparenza,
+            # mediana mobile in pieno, altrimenti quattro curve sovrapposte non si leggono.
+            sm = smooth(g[1:n])
+            pos = sm[sm > 0]
+            top = max(top, float(sm.max()))
+            bot = min(bot, float(pos.min())) if pos.size else bot
+            a.loglog(fr[1:n], g[1:n], lw=0.4, alpha=0.2, color=COLORS[lab])
+            a.loglog(fr[1:n], sm, lw=1.2, color=COLORS[lab], label=lab)
+        a.set_title(f"WP{wp}", fontsize=10)
+        a.grid(True, which="both", ls="--", alpha=0.3)
+    for a in axes.ravel()[len(wps):]:
+        a.axis("off")
+    # Scala y comune a tutti i pannelli (senza, ognuno si autoscala e non sono confrontabili),
+    # ma presa dagli estremi VERI delle curve lisciate: non taglia niente in basso.
+    if np.isfinite(bot) and top > 0:
+        for a in axes.ravel()[:len(wps)]:
+            a.set_ylim(bot * 0.5, top * 3)
     if not drawn:
         plt.close(fig)
         return None
-    for i, name in enumerate(("f1", "f2")):
-        ax[0][i].set_title(f"{name}  -  Ch{channel} WP{wp}")
-        ax[0][i].set_yscale("log"); ax[0][i].grid(True, which="both", ls="--", alpha=0.3)
-        ax[1][i].axhline(1, color="k", lw=0.8)
-        ax[1][i].set_ylim(0.3, 2.2); ax[1][i].set_xlabel("frequency [Hz]")
-        ax[1][i].set_ylabel(f"ratio to '{REFERENCE}'"); ax[1][i].grid(True, ls="--", alpha=0.3)
-    ax[0][0].legend(fontsize=9)
-    fig.tight_layout()
-    out = os.path.join(OUT_DIR, f"filters_ch{channel}_wp{wp}.png")
-    fig.savefig(out, dpi=130); plt.close(fig)
-    return out
-
-
-def f90(f):
-    """Frequenza entro cui sta il 90% del peso del filtro: una misura di banda in un numero."""
-    fr = np.fft.rfftfreq(WINDOW, 1 / SAMPLING_RATE)[:len(f)]
-    c = np.cumsum(np.abs(f))
-    return float(np.interp(0.9 * c[-1], c, fr))
-
-
-def plot_filter_summary(data, keys):
-    """Due numeri per filtro e per WP: la banda (f90) e la distanza dal set di riferimento."""
-    chans = sorted({c for lab in keys for (c, _) in data[lab]})
-    fig, ax = plt.subplots(1, 2, figsize=(13, 4.8))
-    for lab in keys:
-        v, band, dist = [], [], []
-        for (c, wp), rec in sorted(data[lab].items()):
-            f = load_filters(rec, c, wp)
-            g = load_filters(data[REFERENCE].get((c, wp)), c, wp) if REFERENCE in keys else None
-            if f is None:
-                continue
-            v.append(rec["vbias"]); band.append(f90(f[0]))
-            dist.append(np.nan if g is None else
-                        float(np.linalg.norm(f[0] - g[0]) / np.linalg.norm(g[0])))
-        if not v:
-            continue
-        ax[0].plot(v, band, "o", ms=5, color=COLORS[lab], label=lab)
-        ax[1].plot(v, dist, "o", ms=5, color=COLORS[lab], label=lab)
-    ax[0].set_ylabel("f90 of f1  [Hz]"); ax[0].set_title("filter bandwidth")
-    ax[1].set_ylabel(f"|f1 - f1({REFERENCE})| / |f1({REFERENCE})|")
-    ax[1].set_title("distance from the reference filters")
-    for a in ax:
-        a.set_xlabel("V bias [V]"); a.grid(True, ls="--", alpha=0.4); a.legend(fontsize=9)
-    fig.suptitle(f"m205 - band filters, {len(chans)} channels" + (", clean NPS" if NPS_TAG else ""))
-    fig.tight_layout()
-    out = os.path.join(OUT_DIR, "filter_summary.png")
-    fig.savefig(out, dpi=130); plt.close(fig)
+    for a in axes[-1]:
+        a.set_xlabel("frequency [Hz]")
+    for a in axes[:, 0]:
+        a.set_ylabel(rf"$|{which} \cdot$ kernel$|$")
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="upper center", bbox_to_anchor=(0.5, 0.972),
+               ncol=max(1, len(l)), fontsize=11, frameon=False)
+    fig.suptitle(f"m205 Ch{channel} - total filter {which} = {which} x kernel"
+                 + (", clean NPS" if NPS_TAG else ""), y=0.998, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.952])
+    out = os.path.join(OUT_DIR, f"totalfilter_{which}_ch{channel}_{tag}.png")
+    fig.savefig(out, dpi=110); plt.close(fig)
     return out
 
 
@@ -302,13 +312,13 @@ def main():
     if not keys:
         raise SystemExit("[ERROR] nessun set disponibile")
 
+    tag = sets_tag(keys)
     for ch in sorted({c for lab in keys for (c, _) in data[lab]}):
-        print(f"   -> {os.path.relpath(plot_bi(data, ch, keys), BASE_DIR)}")
-        for wp in FILTER_WPS:
-            out = plot_filters(data, ch, wp, keys)
+        print(f"   -> {os.path.relpath(plot_bi(data, ch, keys, tag), BASE_DIR)}")
+        for which in ("f1", "f2"):
+            out = plot_total_filters(data, ch, which, keys, tag)
             if out:
                 print(f"   -> {os.path.relpath(out, BASE_DIR)}")
-    print(f"   -> {os.path.relpath(plot_filter_summary(data, keys), BASE_DIR)}")
     summary_table(data, keys)
 
 
