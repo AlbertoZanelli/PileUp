@@ -125,7 +125,7 @@ def wp_selection(channel, wp):
     return np.asarray(amp, float), tsample.astype(np.int64), np.asarray(baseline, float)
 
 
-def noise_windows(channel, tsample, baseline, n_needed=None):
+def noise_windows(channel, tsample, baseline, n_needed=None, with_rejected=False):
     """`n_needed` finestre di rumore vere (None = tutte quelle che passano il taglio), in volt e con la baseline di Octopus sottratta.
     Prese distribuite uniformemente sull'intervallo del WP, non le prime N, cosi' coprono lo
     stesso arco temporale degli eventi che formano l'AP vero."""
@@ -145,11 +145,13 @@ def noise_windows(channel, tsample, baseline, n_needed=None):
     thr = np.median(sd) + STD_CUT_MAD * np.median(np.abs(sd - np.median(sd))) / 0.6745
     keep = np.flatnonzero(sd < thr)
     if n_needed is None:
-        return win[keep]
-    if len(keep) < n_needed:
-        raise RuntimeError(f"dopo il taglio RMS restano {len(keep)} finestre su {pool}, "
-                           f"ne servono {n_needed}")
-    return win[keep[np.linspace(0, len(keep) - 1, n_needed).astype(int)]]
+        out = win[keep]
+    else:
+        if len(keep) < n_needed:
+            raise RuntimeError(f"dopo il taglio RMS restano {len(keep)} finestre su {pool}, "
+                               f"ne servono {n_needed}")
+        out = win[keep[np.linspace(0, len(keep) - 1, n_needed).astype(int)]]
+    return (out, win[np.flatnonzero(sd >= thr)], thr) if with_rejected else out
 
 
 def noise_traces(channel, wp, n, tsample, baseline):
