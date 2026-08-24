@@ -46,61 +46,82 @@ BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME   = "000205"
 
-# Set di risultati da simulare: cartella col CSV e i filtri addestrati.
-RESULTS_DIR = os.path.join(BASE_DIR, "m205_results_octopus")     # analyse_BI_m205.py (filtro ottimo)
-# analyse_BI_m205.py scrive "BI_results_m205<tag>.csv", col tag della modalita' (_fit,
-# _sim_fitinj, ...): si prende quello che c'e' nella cartella invece di indovinare il nome.
-BI_CSV      = (glob.glob(os.path.join(RESULTS_DIR, "BI_results_m205*.csv")) or
-               [os.path.join(RESULTS_DIR, "BI_results_m205.csv")])[0]
+# ═════════════════════════════════════════════════════════════════════════════
+# COSA SIMULARE: due sole scelte
+# ═════════════════════════════════════════════════════════════════════════════
+# 1) RESULTS_NAME: il NOME DELLA CARTELLA prodotta da analyse_BI_m205.py o dai due programmi
+#    Wiener. Da quel nome si deducono tipo di filtro, template del training e sorgente della
+#    NPS: sono quattro cose che DEVONO combaciare con il training, quindi e' meglio leggerle
+#    dal nome che riscriverle a mano. Il controllo sul kernel verifica comunque il risultato.
+#      m205_results_octopus                    -> filtro ottimo, template root, NPS Octopus
+#      m205_results_octopus_npsclean           -> idem, NPS misurata
+#      m205_results_octopus_fit                -> filtro ottimo, template fit
+#      m205_results_octopus_sim_fitinj         -> filtro ottimo, template = AP simulato fitinj
+#      m205_results_wiener                     -> Wiener (lambda scalare), template root
+#      m205_results_wiener_fit                 -> Wiener, template fit
+#      m205_results_wiener_root_R              -> Wiener + R(f), template root
+#      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
+RESULTS_NAME = "m205_results_octopus"
+
+# 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
+#    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
+#    "fit"  -> il bestfit dello scan (template liscio, senza rumore finito-N).
+#    E' l'UNICA scelta libera: se coincide con il template del training il conto e'
+#    auto-consistente e serve solo da validazione; se differisce, misuri quanto costa
+#    addestrare sul template sbagliato.
+GEN_TEMPLATE = "root"       # "root" | "fit"
+
+# Il rumore degli eventi e' SEMPRE generato (400-600 finestre vere per WP non bastano per
+# NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.
+
+
+def _parse_results_name(name):
+    """(filter_type, train_template, sim_ap_from, nps_source) dedotti dal nome della cartella."""
+    if name.startswith("m205_results_octopus"):
+        base, tag = "optimum", name[len("m205_results_octopus"):]
+    elif name.startswith("m205_results_wiener"):
+        base, tag = "wiener", name[len("m205_results_wiener"):]
+    else:
+        raise SystemExit(f"[ERROR] RESULTS_NAME='{name}' non riconosciuto: deve iniziare per "
+                         "'m205_results_octopus' o 'm205_results_wiener'.")
+    nps = "clean" if tag.endswith("_npsclean") else "octopus"
+    tag = tag[:-len("_npsclean")] if nps == "clean" else tag
+    if base == "wiener" and tag.endswith("_R"):
+        base, tag = "wiener_R", tag[:-2]
+    if tag in ("", "_root"):
+        train, sim = "root", None
+    elif tag == "_fit":
+        train, sim = "fit", None
+    elif tag.startswith("_sim_"):
+        train, sim = "sim", tag[len("_sim_"):]
+    else:
+        raise SystemExit(f"[ERROR] non so dedurre il template dal nome '{name}' (resto: '{tag}'). "
+                         "Cartelle come m205_results_wiener_freq non sono supportate.")
+    return base, train, sim, nps
+
+
+FILTER_TYPE, TRAIN_TEMPLATE, SIM_AP_FROM, NPS_SOURCE = _parse_results_name(RESULTS_NAME)
+
+RESULTS_DIR = os.path.join(BASE_DIR, RESULTS_NAME)
+if not os.path.isdir(RESULTS_DIR):
+    raise SystemExit(f"[ERROR] cartella non trovata: {RESULTS_DIR}")
+# analyse_BI_* scrive "BI_results_*<tag>.csv": si prende quello che c'e' nella cartella.
+_csv = glob.glob(os.path.join(RESULTS_DIR, "BI_results_*.csv"))
+if not _csv:
+    raise SystemExit(f"[ERROR] nessun CSV dei risultati in {RESULTS_DIR}")
+BI_CSV      = _csv[0]
 FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")
 OUT_CSV     = os.path.join(RESULTS_DIR, "BI_mc_error_m205.csv")
 
-# ── Quale template GENERA gli eventi e quale ha ADDESTRATO i filtri ──────────────────
-# Sono due cose distinte, ed e' proprio la loro differenza che si vuole misurare (il paper:
-# "to avoid the bias of using an identical template for injection and training").
-#   GEN_TEMPLATE   -> da cosa si generano gli eventi simulati (la "verita'").
-#   TRAIN_TEMPLATE -> su cosa sono stati addestrati i filtri di RESULTS_DIR. Serve al controllo
-#                     sul kernel: se non combacia, il programma si ferma invece di mescolare.
-# Valori: "root" (medianAP dal ROOT) | "fit" (bestfit dello scan) | "sim" (AP simulato, --make-ap).
-#   GEN="root", TRAIN="root" -> consistenza interna (analitico vs MC), il caso auto-consistente;
-#   GEN="root", TRAIN="sim"  -> stima ONESTA: filtri addestrati su un'altra realizzazione del
-#                               rumore di template, valutati sulla verita'. La differenza tra i
-#                               due e' il guadagno fittizio dell'auto-consistenza.
-GEN_TEMPLATE   = "root"
-TRAIN_TEMPLATE = "root"
-
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
-# AP simulati prodotti da --make-ap: una sottocartella per canale.
 SIM_AP_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
 SIM_AP_PATTERN = os.path.join("ch{ch}", "simAP_{gen}_ch{ch}_wp{wp}.npy")
-SIM_AP_FROM    = "fitinj"   # quale AP simulato leggere quando un TEMPLATE vale "sim":
-                            # "fitinj" | "rootinj" | "fitgen" | "rootgen" (vedi
-                            # build_simAP_injected_m205.py). I vecchi "fit"/"root",
-                            # generati dalla NPS di Octopus, sono superati.
-_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
-if "sim" in (GEN_TEMPLATE, TRAIN_TEMPLATE) and SIM_AP_FROM not in _SIM_OK:
-    raise SystemExit(f"[ERROR] SIM_AP_FROM='{SIM_AP_FROM}' non valido: usare uno di {_SIM_OK}.")
-
-# ── Sorgente della NPS: deve essere LA STESSA con cui sono stati addestrati i filtri ────
-# "octopus": medianpower dal ROOT (mediana usata come media, array one-sided specchiato:
-#   1.84 volte la potenza vera, misurato su ch91).
-# "clean": NPS misurata dalle finestre vere (build_NPS_clean_m205.py), gia' nella convenzione
-#   del simulatore. Se non combacia con quella del training, il controllo sul kernel se ne
-#   accorge e il programma si ferma.
-# ── Tipo di filtro con cui sono stati addestrati i risultati di RESULTS_DIR ────────────
-# "optimum": kernel H = S*/NPS di analyse_BI_m205.py.
-# "wiener":  kernel W = S*/(|S|^2 + lambda*NPS), lambda addestrato letto dal CSV
-#   (colonna `lambda_wiener`), SENZA regolarizzazione.
-# "wiener_R": lo stesso, ma con W <- R(f)*W (reliability_R), usando `beta_R` e `n_events`
-#   dal CSV. E' una modalita' a se' e non si deduce dal CSV: se la sbagli, il controllo sul
-#   kernel se ne accorge e il programma si ferma.
-# Il resto della catena non cambia: il filtro totale applicato ai dati e' g_i = f_i * kernel.
-FILTER_TYPE = "optimum"     # "optimum" | "wiener" | "wiener_R"
-
-NPS_SOURCE  = "octopus"     # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
+
+if GEN_TEMPLATE not in ("root", "fit"):
+    raise SystemExit(f"[ERROR] GEN_TEMPLATE='{GEN_TEMPLATE}' non valido: 'root' o 'fit'.")
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali del CSV
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
@@ -361,9 +382,14 @@ def main():
             make_sim_ap(rows, gen)
         return
 
-    print(f"{len(rows)} coppie (canale, WP): eventi da '{GEN_TEMPLATE}', filtri '{FILTER_TYPE}' "
-          f"addestrati su '{TRAIN_TEMPLATE}' ({os.path.basename(RESULTS_DIR)}), NPS '{NPS_SOURCE}', "
-          f"NSIM={NSIM}, fold_ratio={FOLD_RATIO}, detector_sigma={DETECTOR_SIGMA}\n")
+    print(f"Set: {RESULTS_NAME}")
+    print(f"  dedotto dal nome -> filtro '{FILTER_TYPE}', training su '{TRAIN_TEMPLATE}'"
+          + (f" ({SIM_AP_FROM})" if SIM_AP_FROM else "") + f", NPS '{NPS_SOURCE}'")
+    print(f"  eventi generati da '{GEN_TEMPLATE}'"
+          + ("  [auto-consistente: e' anche il template del training]"
+             if GEN_TEMPLATE == TRAIN_TEMPLATE else "  [incrociato]"))
+    print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, paired_noise={PAIRED_NOISE}, "
+          f"fold_ratio={FOLD_RATIO}, detector_sigma={DETECTOR_SIGMA}\n")
 
     out = []
     print(f"{'ch':>4s} {'wp':>3s} {'BI analitico':>13s} {'BI Monte Carlo':>16s} "
