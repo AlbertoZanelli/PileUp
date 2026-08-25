@@ -149,7 +149,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
 TEMPLATE_SOURCE = "root"      # "fit" | "root" | "sim"
-SIM_SOURCE      = "fitinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
+SIM_SOURCE      = "rootinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
 USE_R           = False      # True solo con "root" (vedi sopra)
 
 _SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
@@ -158,7 +158,7 @@ if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
                      "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [34]
+ONLY_CHANNELS   = [34, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -215,7 +215,7 @@ NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 #                             dire senza scala -- il peso W ne fissa una implicita,
 #                             s_eff ~ sqrt(J/2W) con J ~ 0.3 -- e a differenza della barriera
 #                             distorce (poco) anche i WP sani.
-S_PENALTY = None
+S_PENALTY = ("wna", 1.0)
 
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else "sim_" + SIM_SOURCE)
                + ("_R" if USE_R else "")
@@ -342,7 +342,7 @@ ACCEPTANCE = 0.9
 WINDOW_SIZE = 10_000
 SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
-N_TRIALS = 800
+N_TRIALS = 500
 
 # ── Regolarizzazione R(f) del template (estimatore A) - attiva solo se USE_R
 #   N (impulsi mediati nel template) NON e' fissato: si ricava per ogni (canale, WP)

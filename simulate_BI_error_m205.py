@@ -75,7 +75,7 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_wiener_sim_fitinj_npsclean"
+RESULTS_NAME = "m205_results_wiener_sim_rootinj_npsclean_swna1"
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -83,7 +83,7 @@ RESULTS_NAME = "m205_results_wiener_sim_fitinj_npsclean"
 #    E' l'UNICA scelta libera: se coincide con il template del training il conto e'
 #    auto-consistente e serve solo da validazione; se differisce, misuri quanto costa
 #    addestrare sul template sbagliato.
-GEN_TEMPLATE = "fit"       # "root" | "fit"
+GEN_TEMPLATE = "root"       # "root" | "fit"
 
 # Il rumore degli eventi e' SEMPRE generato (400-600 finestre vere per WP non bastano per
 # NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.

@@ -37,13 +37,19 @@ import matplotlib.pyplot as plt
 # Config
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-NPS_TAG  = "_npsclean"            # "" (NPS di Octopus) oppure "_npsclean": si appende a tutte le cartelle
+NPS_TAG  = ""            # "" (NPS di Octopus) oppure "_npsclean": si appende a tutte le cartelle
 
-SETS = [("root",        "m205_results_wiener"),
-        ("fit",         "m205_results_wiener_fit"),
-        ("sim rootinj", "m205_results_wiener_sim_rootinj"),
-        ("sim fitinj",  "m205_results_wiener_sim_fitinj")]
-PAIRS = [("root", "sim rootinj"), ("fit", "sim fitinj")]
+#SETS = [("root",        "m205_results_wiener_root_npsclean"),
+#        ("sim rootinj", "m205_results_wiener_sim_rootinj_npsclean"),
+#        ("root_swna1",        "m205_results_wiener_root_npsclean_swna1"),
+#        ("sim rootinj_swna1", "m205_results_wiener_sim_rootinj_npsclean_swna1"),]
+#PAIRS = [("root", "sim rootinj"), ("root_swna1", "sim rootinj_swna1")]
+
+SETS = [("sim rootinj", "m205_results_octopus_sim_rootinj_npsclean"),
+        ("sim rootinj_swna1", "m205_results_wiener_sim_rootinj_npsclean_swna1"),]
+
+PAIRS = [("sim rootinj", "sim rootinj_swna1")]
+
 REFERENCE = "root"       # set rispetto a cui si misurano rapporti e distanze fra filtri
 
 BI_SOURCE = "mc"         # "mc" = BI Monte Carlo con barre d'errore ; "analytic" = BI analitico
@@ -52,8 +58,8 @@ GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
 # convivono confronti fra set diversi: filtro ottimo, Wiener, NPS pulita, combinazioni.
 OUT_DIR  = os.path.join(BASE_DIR, "comparisons",
                         "-".join(f.replace("m205_results_", "") + NPS_TAG for _, f in SETS))
-COLORS   = {"root": "tab:blue", "fit": "tab:green",
-            "sim rootinj": "tab:orange", "sim fitinj": "tab:red"}
+COLORS   = {"root": "tab:blue", "root_swna1": "tab:green",
+            "sim rootinj": "tab:orange", "sim rootinj_swna1": "tab:red"}
 SAMPLING_RATE = 10_000
 WINDOW        = 10_000
 
