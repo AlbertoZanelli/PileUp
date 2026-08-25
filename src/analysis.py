@@ -774,6 +774,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
                                    n_trials=500, activation_fct=None, pulse_center_ratio=0.5,
                                    f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
                                    use_R=False, N_events=None, beta_R=2.0, eps_R=1e-12,
+                                   s_penalty=None,
                                    verbose=True, use_interp=False):
     """
     Wiener filter optimization with a trainable noise-modulation factor lambda.
@@ -812,6 +813,18 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             (required when ``use_R``).
         beta_R (float, optional): Reliability threshold of R(f). Defaults to 2.0.
         eps_R (float, optional): 0/0 guard of R(f), fraction of max(|S|^2_n). Defaults to 1e-12.
+        s_penalty (callable or None, optional): ``f(s1, s2) -> tensor``, penalty ADDED TO THE
+            LOSS ONLY (never to the returned ``J_values``), where ``s_i = sqrt(var_i)/signal_amp``
+            is the RELATIVE resolution of band filter i, i.e. sigma_i/mu_i in the notation of the
+            paper (Appendix A: A.5 over A.1). The analytical sigma_Y (A.7) is a first-order
+            expansion valid only for ``s_i << 1`` -- the paper states it explicitly ("standard
+            deviations and covariance small compared to their non-zero mean values") -- and with a
+            trainable lambda the optimizer walks straight out of that domain: it drives lambda to
+            0, both filters towards the same shape, and buys an apparent sigma_Y from a 99.99%
+            cancellation between numerator and denominator that the real (max-search) estimator
+            does not deliver. Measured on m205, 75 (channel, WP) pairs: s <= 0.15 -> BI_MC/BI_analytic
+            <= 1.09; s > 0.2 -> >= 1.57. Passing a penalty here keeps the optimization inside the
+            validity domain of the metric. Defaults to None (identical to the previous behavior).
         verbose (bool, optional): Whether to print progress. Defaults to True.
         use_interp (bool, optional): Whether to interpolate the peak. Defaults to False.
 
@@ -885,13 +898,23 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
         J = compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, signal_amp,
                              ratio_distribution, N_sigma=N_sigma,
                              pulse_center_ratio=pulse_center_ratio, use_interp=use_interp)
-        J_values.append(J.item())
+        J_values.append(J.item())          # SEMPRE la J fisica, senza penalita'
         lambda_values.append(lam.item())
-        J.backward()
+        # La penalita' entra solo nella loss di training: J_values (e quindi il BI riportato)
+        # resta la metrica del paper. Cfr. il paper, sez. 4.5: il BI pubblicato e' comunque
+        # quello simulato, l'analitico e' il surrogato derivabile che serve ad addestrare.
+        loss = J
+        if s_penalty is not None:
+            var1, var2, _ = compute_vars_wiener(W_unit, S, nps, f1, f2)
+            s1 = var1.clamp_min(0) ** 0.5 / signal_amp
+            s2 = var2.clamp_min(0) ** 0.5 / signal_amp
+            loss = J + s_penalty(s1, s2)
+        loss.backward()
         optimizer.step()
         scheduler.step()
         if step % 10 == 0 and verbose:
-            print(f"Step {step}: J = {J.item():.6f}  lambda = {lam.item():.4f}")
+            print(f"Step {step}: J = {J.item():.6f}  lambda = {lam.item():.4f}"
+                  + ("" if s_penalty is None else f"  loss = {loss.item():.6f}"))
     lam = torch.exp(log_lambda).detach()
     print(f"Final: J = {J.item():.6f}  lambda = {lam.item():.4f}")
     f1 = f1.detach()

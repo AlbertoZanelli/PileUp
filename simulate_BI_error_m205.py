@@ -98,6 +98,11 @@ def _parse_results_name(name):
     else:
         raise SystemExit(f"[ERROR] RESULTS_NAME='{name}' non riconosciuto: deve iniziare per "
                          "'m205_results_octopus' o 'm205_results_wiener'.")
+    # Suffisso della penalita' sulla condizione di validita' (S_PENALTY in
+    # analysis_BI_m205_wiener_regolarized.py, es. "_sbar0.15" / "_swna1"): e' l'ULTIMO tag
+    # aggiunto al nome, e non cambia nulla per il MC -- la penalita' agisce solo in training,
+    # il kernel salvato e' quello, e lambda si legge comunque dal CSV. Si toglie e si prosegue.
+    tag = re.sub(r"_(sbar|swna)[0-9.eE+-]+$", "", tag)
     nps = "clean" if tag.endswith("_npsclean") else "octopus"
     tag = tag[:-len("_npsclean")] if nps == "clean" else tag
     if base == "wiener" and tag.endswith("_R"):
