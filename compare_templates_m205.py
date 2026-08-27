@@ -2,20 +2,19 @@
 """
 compare_templates_m205.py
 =========================
-Confronta i BI e i FILTRI addestrati su template diversi, a parita' di tutto il resto.
+Confronta i BI e i FILTRI di campagne diverse, a parita' di tutto il resto.
 
-I quattro set:
-    root        -> template = medianAP di Octopus (l'AP vero)
-    fit         -> template = bestfit dello scan (liscio, senza rumore finito-N)
-    sim rootinj -> template = AP SIMULATO generato dal medianAP, rumore vero iniettato
-    sim fitinj  -> template = AP SIMULATO generato dal fit, rumore vero iniettato
+In SETS si mettono i NOMI DELLE CARTELLE: etichette, colori, nomi dei file e titoli sono
+DEDOTTI da li' (describe()), cosi' non si possono disallineare dal contenuto.
 
-Le due COPPIE sono quelle che isolano l'effetto del rumore di template, perche' dentro
-ogni coppia la FORMA del template e' la stessa e cambia solo la realizzazione del rumore:
-    root <-> sim rootinj      e      fit <-> sim fitinj
-Se il BI di un set simulato e' compatibile con quello del suo originale, il rumore di
-template non sta influenzando il risultato; se non lo e', la differenza e' il costo di
-addestrare su una realizzazione diversa (cioe' il guadagno fittizio dell'auto-consistenza).
+    m205_results_octopus_npsclean           -> OF-root      "optimum filter - train root"
+    m205_results_wiener_fit_npsclean        -> W-fit        "Wiener - train fit"
+    m205_results_wiener_root_npsclean_swna1 -> Wwna-root    "Wiener + s-penalty - train root"
+
+Convenzione dei nomi: la NPS pulita e' il DEFAULT e non si scrive; compare solo se il set
+usa quella di Octopus. Il template del TRAINING sta nell'etichetta di ogni set; il template
+INIETTATO negli eventi del Monte Carlo (colonna `gen` del CSV) sta nel titolo e nel nome del
+file, perche' di solito e' lo stesso per tutti i set confrontati.
 
 Legge, per ogni set:
   - BI_results_*.csv          (BI analitico, sigma, SNR, J)          da analyse_BI_m205.py
@@ -27,7 +26,7 @@ Uso:
     KMP_DUPLICATE_LIB_OK=TRUE python3 compare_templates_m205.py
 """
 
-import os, csv, glob
+import os, re, csv, glob
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -37,31 +36,80 @@ import matplotlib.pyplot as plt
 # Config
 # ═════════════════════════════════════════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-NPS_TAG  = ""            # "" (NPS di Octopus) oppure "_npsclean": si appende a tutte le cartelle
 
-#SETS = [("root",        "m205_results_wiener_root_npsclean"),
-#        ("sim rootinj", "m205_results_wiener_sim_rootinj_npsclean"),
-#        ("root_swna1",        "m205_results_wiener_root_npsclean_swna1"),
-#        ("sim rootinj_swna1", "m205_results_wiener_sim_rootinj_npsclean_swna1"),]
-#PAIRS = [("root", "sim rootinj"), ("root_swna1", "sim rootinj_swna1")]
+# I set da confrontare: SOLO i nomi delle cartelle. Tutto il resto e' dedotto.
+SETS = ["m205_results_octopus_npsclean",
+        "m205_results_wiener_root_npsclean",
+        "m205_results_wiener_root_npsclean_swna1"]
 
-SETS = [("sim rootinj", "m205_results_octopus_sim_rootinj_npsclean"),
-        ("sim rootinj_swna1", "m205_results_wiener_sim_rootinj_npsclean_swna1"),]
-
-PAIRS = [("sim rootinj", "sim rootinj_swna1")]
-
-REFERENCE = "root"       # set rispetto a cui si misurano rapporti e distanze fra filtri
+# Coppie per i pannelli di differenza. None = ogni set contro il PRIMO della lista.
+# Altrimenti una lista di (tag_riferimento, tag_confronto) con i tag corti di describe().
+PAIRS = None
 
 BI_SOURCE = "mc"         # "mc" = BI Monte Carlo con barre d'errore ; "analytic" = BI analitico
 GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
-# La cartella di output nomina le CARTELLE confrontate (non solo le etichette), cosi'
-# convivono confronti fra set diversi: filtro ottimo, Wiener, NPS pulita, combinazioni.
-OUT_DIR  = os.path.join(BASE_DIR, "comparisons",
-                        "-".join(f.replace("m205_results_", "") + NPS_TAG for _, f in SETS))
-COLORS   = {"root": "tab:blue", "root_swna1": "tab:green",
-            "sim rootinj": "tab:orange", "sim rootinj_swna1": "tab:red"}
+COLORS = {}              # override manuale {tag: colore}; default = ciclo C0, C1, ...
 SAMPLING_RATE = 10_000
 WINDOW        = 10_000
+
+# Nomi lunghi per la legenda, a partire dal tag corto del filtro.
+FILTER_LABEL = {"OF": "optimum filter", "W": "Wiener", "WR": "Wiener x R(f)"}
+# suffisso della cartella -> (pezzo del tag corto, pezzo dell'etichetta). Il suffisso e'
+# quello scritto da S_PENALTY in analysis_BI_m205_wiener_regolarized.py: "_swna<w>", "_sbar<s>".
+PENALTY = {"swna": ("wna", " + s-penalty"), "sbar": ("sbar", " + s-barrier")}
+
+
+def describe(folder):
+    """(tag corto, etichetta di legenda) dal nome della cartella dei risultati.
+
+    Stessa grammatica di simulate_BI_error_m205._parse_results_name, cosi' i due programmi
+    non possono leggere il nome in due modi diversi. La NPS pulita e' il default e sparisce
+    dal nome; quella di Octopus si vede, perche' e' l'eccezione."""
+    for prefix, filt in (("m205_results_octopus", "OF"), ("m205_results_wiener", "W")):
+        if folder.startswith(prefix):
+            tag = folder[len(prefix):]
+            break
+    else:
+        raise SystemExit(f"[ERROR] nome non riconosciuto: {folder}")
+    m = re.search(r"_(sbar|swna)[0-9.eE+-]+$", tag)
+    pen_tag, pen_label = PENALTY.get(m.group(1), ("", "")) if m else ("", "")
+    tag = tag[:m.start()] if m else tag
+    nps = "clean" if tag.endswith("_npsclean") else "octopus"
+    tag = tag[:-len("_npsclean")] if nps == "clean" else tag
+    if tag.endswith("_R"):
+        filt, tag = filt + "R", tag[:-2]
+    if tag in ("", "_root"):
+        train = "root"
+    elif tag == "_fit":
+        train = "fit"
+    elif tag.startswith("_sim_"):
+        train = tag[len("_sim_"):]
+    else:
+        raise SystemExit(f"[ERROR] non so dedurre il template di training da '{folder}'")
+    short = f"{filt}{pen_tag}-{train}" + ("-npsoct" if nps == "octopus" else "")
+    label = (FILTER_LABEL.get(filt, filt) + pen_label
+             + f" - train {train}" + ("  (Octopus NPS)" if nps == "octopus" else ""))
+    return short, label
+
+
+TAGS = [describe(f)[0] for f in SETS]
+LABELS = dict(describe(f) for f in SETS)
+FOLDERS = dict(zip(TAGS, SETS))
+REFERENCE = TAGS[0]                      # riferimento di rapporti e differenze
+PAIRS = PAIRS or [(REFERENCE, t) for t in TAGS[1:]]
+# La cartella di output nomina i set confrontati con i tag corti: due confronti diversi
+# non si sovrascrivono, e il nome resta leggibile.
+OUT_DIR = os.path.join(BASE_DIR, "comparisons", "_vs_".join(TAGS))
+
+
+def color(tag):
+    return COLORS.get(tag, f"C{TAGS.index(tag)}")
+
+
+def marker(tag):
+    """Marker diverso per set: a bias alto i BI coincidono entro il tratto, e con lo stesso
+    marker l'ultimo disegnato copre gli altri e sembrano spariti."""
+    return "os^Dv"[TAGS.index(tag) % 5]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -69,7 +117,7 @@ WINDOW        = 10_000
 # ═════════════════════════════════════════════════════════════════════════════
 def load_set(folder):
     """{(ch, wp): dict} con BI analitico, BI MC e sigma, per un set. None se manca."""
-    d = os.path.join(BASE_DIR, folder + NPS_TAG)
+    d = os.path.join(BASE_DIR, folder)
     files = glob.glob(os.path.join(d, "BI_results_*.csv"))
     if not files:
         return None
@@ -78,7 +126,7 @@ def load_set(folder):
         k = (int(r["channel"]), int(r["wp"]))
         out[k] = dict(vbias=float(r["vbias"]), BI=float(r["BI"]),
                       sigma_analytic=float(r["sigma_analytic"]), SNR=float(r["SNR"]),
-                      BI_mc=np.nan, sigma_BI=np.nan, dir=d)
+                      BI_mc=np.nan, sigma_BI=np.nan, gen="", nsim=np.nan, dir=d)
     mc = os.path.join(d, "BI_mc_error_m205.csv")
     if os.path.exists(mc):
         for r in csv.DictReader(open(mc)):
@@ -86,7 +134,21 @@ def load_set(folder):
             if k in out:
                 out[k]["BI_mc"] = float(r["BI_mc"])
                 out[k]["sigma_BI"] = float(r["sigma_BI"])
+                # il template INIETTATO e la statistica del MC stanno solo qui: servono al
+                # titolo e alla nota sul pannello delle differenze
+                out[k]["gen"] = r.get("gen", "")
+                out[k]["nsim"] = float(r.get("nsim") or np.nan)
     return out
+
+
+def mc_info(data, keys, channel):
+    """(template iniettato, NSIM) dei set disegnati, come stringhe pronte per il titolo.
+    Se i set non concordano si elencano tutti: e' un'informazione, non un errore."""
+    def collect(field, cast=str):
+        v = {cast(rec[field]) for lab in keys for (c, _), rec in data[lab].items()
+             if c == channel and rec[field] == rec[field] and rec[field] != ""}
+        return "/".join(sorted(v)) or "?"
+    return collect("gen"), collect("nsim", lambda x: f"{int(x)}")
 
 
 def value(rec):
@@ -131,8 +193,8 @@ def load_filters(rec, ch, wp):
 # ═════════════════════════════════════════════════════════════════════════════
 # Figure
 # ═════════════════════════════════════════════════════════════════════════════
-def plot_bi(data, channel, keys, tag):
-    """BI vs V_bias per i quattro set, piu' la compatibilita' dentro ogni coppia."""
+def plot_bi(data, channel, keys):
+    """BI vs V_bias dei set, piu' differenza e compatibilita' dentro ogni coppia."""
     fig, ax = plt.subplots(3, 1, figsize=(9, 9.5), sharex=True,
                            gridspec_kw={"height_ratios": [2.4, 1, 1]})
     for lab in keys:
@@ -145,17 +207,21 @@ def plot_bi(data, channel, keys, tag):
         if not v:
             continue
         e = np.array(e, dtype=float)
-        ax[0].errorbar(v, b, yerr=np.where(np.isfinite(e), e, 0), fmt="o", ms=5, capsize=3,
-                       lw=1, color=COLORS[lab], label=lab)
+        ax[0].errorbar(v, b, yerr=np.where(np.isfinite(e), e, 0), fmt=marker(lab), ms=5,
+                       capsize=3, lw=1, mfc="none", mew=1.3,
+                       color=color(lab), label=LABELS[lab])
     ax[0].set_ylabel("BI  [counts/keV/kg/yr]")
     # il titolo deve dire cosa e' stato DAVVERO disegnato: se il CSV del Monte Carlo manca,
     # value() ripiega sul BI analitico e dirlo "Monte Carlo" sarebbe falso.
     got = [np.isfinite(rec["BI_mc"]) for lab in keys for (c, _), rec in data[lab].items()
            if c == channel]
-    src = ("Monte Carlo" if BI_SOURCE == "mc" and all(got) and got else
+    src = ("simulated (Monte Carlo)" if BI_SOURCE == "mc" and got and all(got) else
            "analytic" if not any(got) else "Monte Carlo where available, else analytic")
-    ax[0].set_title(f"m205 Ch{channel} - BI vs bias, four training templates"
-                    f"  ({src}{', clean NPS' if NPS_TAG else ''})")
+    gen, nsim = mc_info(data, keys, channel)
+    inj = (f"events injected from '{gen}' AP, {nsim} events/population"
+           if "Monte Carlo" in src else "no events: BI = J x K from the model")
+    ax[0].set_title(f"m205 Ch{channel} - background index vs bias\n"
+                    f"BI: {src}   |   {inj}", fontsize=11)
     ax[0].legend(fontsize=9); ax[0].grid(True, ls="--", alpha=0.4)
 
     # compatibilita' dentro le coppie: z = (BI_a - BI_b) / sqrt(sa^2 + sb^2)
@@ -174,28 +240,39 @@ def plot_bi(data, channel, keys, tag):
             if ba:
                 vd.append(rec["vbias"]); d.append(100.0 * (bb - ba) / ba)
         if v:
-            ax[1].plot(v, z, "o-", ms=4, lw=1, color=COLORS[b], label=f"{b} vs {a}")
+            ax[1].plot(v, z, "o-", ms=4, lw=1, color=color(b), label=f"{b} vs {a}")
         if vd:
-            ax[2].plot(vd, d, "o-", ms=4, lw=1, color=COLORS[b], label=f"{b} vs {a}")
+            ax[2].plot(vd, d, "o-", ms=4, lw=1, color=color(b), label=f"{b} vs {a}")
     for k, c in ((1, "0.6"), (2, "0.8")):
         ax[1].axhspan(-k, k, color=c, alpha=0.25, zorder=0)
     ax[1].axhline(0, color="k", lw=0.8)
-    ax[1].set_ylabel(r"z = $\Delta$BI / $\sigma_{MC}$")
+    ax[1].set_ylabel(r"z")
+    ax[1].text(0.012, 0.97, r"z = (BI $-$ BI$_{ref}$) / $\sqrt{\sigma^2 + \sigma_{ref}^2}$   "
+               r"$\sigma$ = Monte Carlo statistics only (shaded: 1$\sigma$, 2$\sigma$)",
+               transform=ax[1].transAxes, fontsize=7.5, color="0.25", va="top",
+               bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
     ax[2].axhline(0, color="k", lw=0.8)
     ax[2].set_ylabel(r"$\Delta$BI  [%]"); ax[2].set_xlabel("V bias [V]")
+    # Il pannello delle differenze deve dire COME e' calcolata la differenza e SU QUALE BI:
+    # senza, "-4%" non e' interpretabile (BI analitico o simulato? rispetto a chi?).
+    ax[2].text(0.012, 0.97,
+               rf"$\Delta$BI = 100 $\cdot$ (BI $-$ BI$_{{ref}}$) / BI$_{{ref}}$   on the "
+               rf"{'simulated' if 'Monte Carlo' in src else 'analytic'} BI   |   "
+               rf"negative = better than the reference",
+               transform=ax[2].transAxes, fontsize=7.5, color="0.25", va="top",
+               bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
     for a in ax[1:]:
         if a.get_legend_handles_labels()[0]:      # niente coppie disegnate -> niente legenda
             a.legend(fontsize=8)
         a.grid(True, ls="--", alpha=0.4)
     fig.tight_layout()
-    out = os.path.join(OUT_DIR, f"BI_vs_vbias_ch{channel}_{tag}.png")
+    # Il nome dice la QUANTITA' (BI simulato o analitico), il canale e cosa e' stato iniettato.
+    # Quali set sono confrontati lo dice gia' la cartella, non serve ripeterlo qui.
+    kind = "mc" if "Monte Carlo" in src else "analytic"
+    out = os.path.join(OUT_DIR, f"BI-{kind}_ch{channel}"
+                       + (f"_inj-{gen}" if kind == "mc" else "") + ".png")
     fig.savefig(out, dpi=130); plt.close(fig)
     return out
-
-
-def sets_tag(keys):
-    """Identifica il confronto, cosi' due confronti diversi non si sovrascrivono i file."""
-    return "_".join(l.replace(" ", "") for l in keys) + NPS_TAG
 
 
 def smooth(y, size=51):
@@ -220,8 +297,8 @@ def total_filter(rec, ch, wp, which):
     return np.abs(f[:n] * k[:n])
 
 
-def plot_total_filters(data, channel, which, keys, tag):
-    """Una griglia per canale e per filtro: un pannello per WP, dentro i quattro set."""
+def plot_total_filters(data, channel, which, keys):
+    """Una griglia per canale e per filtro: un pannello per WP, dentro tutti i set."""
     wps = sorted({wp for lab in keys for (c, wp) in data[lab] if c == channel})
     if not wps:
         return None
@@ -245,8 +322,8 @@ def plot_total_filters(data, channel, which, keys, tag):
             pos = sm[sm > 0]
             top = max(top, float(sm.max()))
             bot = min(bot, float(pos.min())) if pos.size else bot
-            a.loglog(fr[1:n], g[1:n], lw=0.4, alpha=0.2, color=COLORS[lab])
-            a.loglog(fr[1:n], sm, lw=1.2, color=COLORS[lab], label=lab)
+            a.loglog(fr[1:n], g[1:n], lw=0.4, alpha=0.2, color=color(lab))
+            a.loglog(fr[1:n], sm, lw=1.2, color=color(lab), label=LABELS[lab])
         a.set_title(f"WP{wp}", fontsize=10)
         a.grid(True, which="both", ls="--", alpha=0.3)
     for a in axes.ravel()[len(wps):]:
@@ -266,18 +343,25 @@ def plot_total_filters(data, channel, which, keys, tag):
     h, l = axes[0][0].get_legend_handles_labels()
     fig.legend(h, l, loc="upper center", bbox_to_anchor=(0.5, 0.972),
                ncol=max(1, len(l)), fontsize=11, frameon=False)
-    fig.suptitle(f"m205 Ch{channel} - total filter {which} = {which} x kernel"
-                 + (", clean NPS" if NPS_TAG else ""), y=0.998, fontsize=13)
+    fig.suptitle(f"m205 Ch{channel} - total filter applied to the data:  "
+                 rf"$|{which} \times$ kernel$|$   (kernel = the trained filter's own)",
+                 y=0.998, fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.952])
-    out = os.path.join(OUT_DIR, f"totalfilter_{which}_ch{channel}_{tag}.png")
+    out = os.path.join(OUT_DIR, f"filter-{which}_ch{channel}.png")
     fig.savefig(out, dpi=110); plt.close(fig)
     return out
 
 
 def summary_table(data, keys):
     """Mediane sui punti in comune: BI relativo al riferimento e compatibilita' per coppia."""
-    print(f"\n{'set':>12s} {'punti':>6s} {'BI mediano':>12s} {'vs ' + REFERENCE:>10s} "
-          f"{'MC/analitico':>13s}")
+    got = [np.isfinite(rec["BI_mc"]) for lab in keys for rec in data[lab].values()]
+    src = ("simulato (MC)" if BI_SOURCE == "mc" and got and all(got) else
+           "analitico" if not (BI_SOURCE == "mc" and any(got)) else
+           "simulato dove c'e', altrimenti analitico")
+    print(f"\nBI usato nelle colonne 'BI mediano' e 'vs riferimento': {src}. "
+          f"Riferimento: {REFERENCE}.")
+    print(f"{'set':>16s} {'punti':>6s} {'BI mediano':>12s} {'vs ' + REFERENCE:>14s} "
+          f"{'BI_mc/BI_an':>12s}")
     for lab in keys:
         bi, rel, rat = [], [], []
         for k, rec in data[lab].items():
@@ -287,9 +371,9 @@ def summary_table(data, keys):
                 rat.append(rec["BI_mc"] / rec["BI"])
             if REFERENCE in keys and k in data[REFERENCE]:
                 rel.append(b / value(data[REFERENCE][k])[0])
-        print(f"{lab:>12s} {len(bi):>6d} {np.median(bi):12.4e} "
-              f"{(np.median(rel) if rel else np.nan):10.3f} "
-              f"{(np.median(rat) if rat else np.nan):13.3f}")
+        print(f"{lab:>16s} {len(bi):>6d} {np.median(bi):12.4e} "
+              f"{(np.median(rel) if rel else np.nan):14.3f} "
+              f"{(np.median(rat) if rat else np.nan):12.3f}")
     for a, b in PAIRS:
         if a not in keys or b not in keys:
             continue
@@ -308,21 +392,20 @@ def summary_table(data, keys):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     data, keys = {}, []
-    for lab, folder in SETS:
+    for tag, folder in FOLDERS.items():
         d = load_set(folder)
         if d is None:
-            print(f"[INFO] salto '{lab}': nessun CSV in {folder + NPS_TAG}")
+            print(f"[INFO] salto '{tag}': nessun CSV in {folder}")
             continue
-        data[lab], _ = d, keys.append(lab)
-        print(f"[OK]   '{lab}': {len(d)} coppie da {folder + NPS_TAG}")
+        data[tag], _ = d, keys.append(tag)
+        print(f"[OK]   {tag:<14s} = {LABELS[tag]:<38s} ({len(d)} coppie da {folder})")
     if not keys:
         raise SystemExit("[ERROR] nessun set disponibile")
 
-    tag = sets_tag(keys)
     for ch in sorted({c for lab in keys for (c, _) in data[lab]}):
-        print(f"   -> {os.path.relpath(plot_bi(data, ch, keys, tag), BASE_DIR)}")
+        print(f"   -> {os.path.relpath(plot_bi(data, ch, keys), BASE_DIR)}")
         for which in ("f1", "f2"):
-            out = plot_total_filters(data, ch, which, keys, tag)
+            out = plot_total_filters(data, ch, which, keys)
             if out:
                 print(f"   -> {os.path.relpath(out, BASE_DIR)}")
     summary_table(data, keys)
