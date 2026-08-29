@@ -2,45 +2,49 @@
 """
 build_simAP_injected_m205.py
 ============================
-AP SIMULATI iniettando il template su FINESTRE DI RUMORE VERE del file binario, invece di
-generare rumore gaussiano dalla NPS (che e' quello che fa `simulate_BI_error_m205.py --make-ap`).
-Con NOISE_SOURCE = "clean_nps" si possono generare le tracce dalla NPS misurata invece di
-leggerle, per quantificare quanto pesa la scelta (misurato su ch91: 1.08 contro 1.17).
+Costruisce gli AVERAGE PULSE SIMULATI usati come TEMPLATE DI ADDESTRAMENTO.
 
-Perche': il rumore generato dalla `medianpower` di Octopus e' ~1.28 volte troppo grande (il
-fattore 2*ln2 della NPS) ed e' gaussiano per costruzione, mentre il rumore vero e' dominato da
-righe di ampiezza fissa e fase casuale, che la mediana attenua meglio di una gaussiana (altro
-~1.19). Insieme fanno un AP simulato 1.5 volte piu' rumoroso di quello vero. Prendendo il rumore
-dai dati, entrambi i fattori spariscono per costruzione.
+Due modi, scelti da MODE:
 
-E' il procedimento del paper: `test/analysis_meanpulse_test.py` non genera rumore, inietta gli
-impulsi su finestre vere del binario (`src/dataset.py: CachedBinaryDataset_withgenerated`,
-`self.data += e1*pulse(...)`), e le finestre di rumore le sceglie `test/select_noise_traces.py`
-con un taglio sulla RMS della finestra (`std < StdCut`, una soglia per canale).
+  MODE = "mc"  (consigliato)
+    L'AP e' la mediana di N_PULSES impulsi SINGOLI generati dallo STESSO simulatore del Monte
+    Carlo: stesso template, stessa NPS misurata, ampiezza di ROI. E' la struttura del paper
+    (sez. 4.5): il template dell'analisi si ri-misura dagli eventi simulati, invece di essere
+    lo stesso oggetto che li ha generati. Con N grande il rumore del template diventa
+    trascurabile (va come 1/sqrt(N)), che e' il punto: si vuole addestrare su una FORMA, non
+    su una realizzazione di rumore. Il paper ne usa 12288.
+    Non serve il file binario: gira in locale.
 
-Qui quel taglio non serve rifarlo a mano: Octopus lo ha gia' fatto, per ogni WP, con
-`cuts_noise_rms_wp<wp>`, `cuts_noise_slope_wp<wp>` e `cuts_noise_amplitude_wp<wp>` (~510 eventi
-per WP). Sono esattamente le finestre con cui e' costruita `averagepowerspectrum_noise_wp<wp>`,
-quindi il rumore iniettato e' per costruzione la stessa popolazione della NPS del confronto.
+  MODE = "realnoise"  (vecchio, per la sistematica)
+    Il template viene iniettato su FINESTRE DI RUMORE VERE lette dal binario, tante quanti
+    sono gli impulsi dell'AP vero (36-39), con le ampiezze LED vere. Serviva a misurare quanto
+    pesa il rumore di un template fatto con pochi impulsi, e quanto il rumore vero (righe di
+    ampiezza fissa e fase casuale) differisca da quello gaussiano generato dalla NPS.
+    Va eseguito DOVE STANNO I BINARI (server): BIN_DIR non esiste in locale.
 
-Differenze volute rispetto al paper: N = quello dell'AP vero (36-39, non 12288), perche' la
-domanda e' proprio quanto pesa il rumore di un template fatto con pochi impulsi; mediana e non
-media, per restare sulla convenzione di Octopus.
+NOMENCLATURA dei file prodotti (m205_AP_sim/ch<ch>/):
+    simAP_APsim<template><N>_ch<ch>_wp<wp>.npy    MODE="mc",        es. APsimfit5000
+    simAP_APreal<template><N>_ch<ch>_wp<wp>.npy   MODE="realnoise", es. APrealfit38
+Il tag dice le tre cose che servono: e' un AP simulato, da quale template, da quanti impulsi.
+I vecchi tag "fitinj"/"rootinj"/"fitgen"/"rootgen" NON vengono piu' prodotti: il suffisso
+inj/gen si riferiva alla sorgente del RUMORE, non al template, e si prestava a confusione.
+I file gia' su disco restano leggibili, cambia solo cosa si scrive da qui in avanti.
 
-Va eseguito DOVE STANNO I BINARI (server): BIN_DIR non esiste in locale. Poi si sincronizzano
-gli .npy, come per extract_AP_pulses_m205.py.
-`--selftest` gira in locale: sostituisce il lettore del binario con uno stream sintetico.
+Il tag va poi messo in TEMPLATE_SOURCE dei programmi di analisi, ed e' quello che finisce nel
+nome della cartella dei risultati (m205_results_wiener_APsimfit5000_npsclean).
+
+`--selftest` gira in locale e verifica il rumore residuo dell'AP contro la formula.
 
 Uso:
     KMP_DUPLICATE_LIB_OK=TRUE python3 build_simAP_injected_m205.py
 """
 
-import os, glob
+import os, csv, glob
 import numpy as np
 import uproot
 
 import extract_AP_pulses_m205 as ex        # lettore del binario, gia' verificato bit-a-bit
-import src.simulation as sim               # solo per NOISE_SOURCE = "clean_nps"
+import src.simulation as sim               # generatore degli impulsi, lo stesso del MC
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Config
@@ -54,25 +58,48 @@ MEAS_NAME  = "000205"
 BIN_DIR    = os.path.join(DATA_DIR, "Bin file")   # sul server: "/data2/LSC/DATA/RUN14/000205"
 ex.BIN_DIR = BIN_DIR
 
-CHANNELS   = [91]           # in locale c'e' solo il binario di ch91; sul server [31, 34, 71, 83, 91]
+CHANNELS   = [31, 34, 71, 83, 91]      # in "mc" non serve il binario: tutti i canali buoni
 WPS        = list(range(1, 30, 2))
-TEMPLATES  = ["root", "fit"]           # template iniettato -> file con tag "rootinj"/"fitinj"
+TEMPLATES  = ["fit"]                   # template da cui costruire l'AP: "fit" e/o "root"
 
 WINDOW     = 10_000
 PRETRIGGER = 0.5
-# ── Da dove viene il rumore delle tracce su cui si costruisce l'AP simulato ──────────
-# "real": finestre vere lette dal binario (default). E' la strada del paper, ed e' la piu'
-#   fedele: su ch91 l'AP simulato ha rumore 1.08 volte quello dell'AP vero.
-# "clean_nps": rumore GENERATO dalla NPS misurata (build_NPS_clean_m205.py). Coerente con il
-#   rumore degli eventi del Monte Carlo, che e' generato anch'esso, ma un po' peggiore come
-#   template: 1.17 invece di 1.08, perche' resta gaussiano mentre il rumore vero e' dominato
-#   da righe e la mediana di 38 tracce le attenua meglio. Serve a quantificare quella
-#   differenza come sistematica, non a sostituire l'iniezione.
-# I due set finiscono in file diversi ("...inj..." e "...gen..."), non si mescolano.
-NOISE_SOURCE = "real"                  # "real" | "clean_nps"
+SAMPLING_RATE = 10_000
+
+# ── Come si costruisce l'AP ─────────────────────────────────────────────────
+MODE     = "mc"          # "mc" = impulsi generati come nel Monte Carlo | "realnoise" = iniezione
+                         #        su finestre vere dal binario (serve il .bin, solo sul server)
+N_PULSES = 10000         # solo per MODE="mc": quanti impulsi mediare. Il rumore del template
+                         # e' sigma_raw / (A * sqrt(N)). Con la media si accumula, quindi N non
+                         # ha limiti di memoria: costa solo CPU (~4.6 s ogni 5000 impulsi).
+                         # Misurato su ch91 WP15 all'ampiezza di ROI (sigma_raw/A = 0.364):
+                         #        N        rumore del template     vs AP vero (1.74e-4)
+                         #     5000            5.1e-3                    30x
+                         #    12288            3.3e-3                    19x   (come il paper)
+                         #      1e6            3.6e-4                     2x
+                         #    4.4e6            1.7e-4                     1x
+# A che AMPIEZZA si generano gli impulsi da mediare.
+#   "roi" (default): l'ampiezza di amplitudes_m205.csv, la STESSA che il Monte Carlo inietta
+#       negli eventi. E' la scelta coerente: l'AP dev'essere la media di QUEGLI impulsi.
+#       Il rumore del template e' sigma_raw/(A*sqrt(N)) e lo si sceglie con N (vedi tabella
+#       nel commento di N_PULSES). Attenzione a non confondere i due SNR: quello del CSV e'
+#       A/sigma_OF = 10-150 (risoluzione del filtro ottimo, integra su tutto l'impulso), mentre
+#       la costruzione dell'AP vede A/sigma_raw = 1.4-13.6 (RMS della traccia non filtrata).
+#       Sono diversi di un fattore 5-15, ed e' il secondo a fissare il rumore del template.
+#   "led": l'ampiezza LED vera del WP, quella a cui l'AP vero e' misurato davvero (~0.5 V,
+#       SNR di picco ~1200). Da' un template ~10 volte piu' pulito di quello vero con N=5000,
+#       ma NON e' la media degli eventi del Monte Carlo: e' un altro oggetto. Il tag del file
+#       prende il suffisso "led" per non confonderli.
+AP_AMPLITUDE = "roi"     # "led" | "roi"
+GEN_CHUNK = 500          # impulsi generati per volta: il simulatore alloca sei array complessi
+                         # (n, 10000), a 5000 in un colpo sono ~4 GB l'uno.
+
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
+AMP_CSV     = os.path.join(BASE_DIR, "amplitudes_m205.csv")   # ampiezze di ROI, in mV
+VBIAS_LIST  = np.array([0.6, 1.0, 1.4, 1.8, 2, 3, 4, 5, 6, 8, 10, 20, 26, 30, 40])
 
+# ── Solo per MODE = "realnoise" ─────────────────────────────────────────────
 STD_CUT_MAD = 5.0                      # taglio sulla RMS della finestra INTERA, come il
                                        # `std < StdCut` di test/select_noise_traces.py: scarta
                                        # le finestre oltre mediana + STD_CUT_MAD*MAD. Serve:
@@ -80,7 +107,7 @@ STD_CUT_MAD = 5.0                      # taglio sulla RMS della finestra INTERA,
                                        # qualche finestra con un impulso nella seconda meta'
                                        # passa (misurate std fino a 70 volte la mediana).
 POOL_FACTOR = 3                        # finestre lette per ognuna che serve, prima del taglio
-AMP_MODE   = "real"                    # "real": le ampiezze dei 38 eventi veri, con la loro
+AMP_MODE   = "real"                    # "real": le ampiezze LED dei 38 eventi veri, con la loro
                                        # dispersione; "median": tutte uguali alla mediana
 JITTER     = 0                         # spostamento casuale del template [campioni], come lo
                                        # `smearing` del pos file del paper. 0 = allineamento
@@ -154,104 +181,171 @@ def noise_windows(channel, tsample, baseline, n_needed=None, with_rejected=False
     return (out, win[np.flatnonzero(sd >= thr)], thr) if with_rejected else out
 
 
-def noise_traces(channel, wp, n, tsample, baseline):
-    """`n` tracce di rumore secondo NOISE_SOURCE: vere dal binario, oppure generate dalla
-    NPS misurata (che e' gia' nella convenzione E|FFT(x)|^2 del simulatore)."""
-    if NOISE_SOURCE == "real":
-        return noise_windows(channel, tsample, baseline, n)
+def load_nps(channel, wp):
+    """NPS misurata, gia' nella convenzione E|FFT(x)|^2 usata da tutto il progetto."""
     path = os.path.join(NPS_DIR, NPS_PATTERN.format(ch=channel, wp=wp))
     if not os.path.exists(path):
         raise RuntimeError(f"NPS 'clean' non trovata: {path}")
-    nps = np.asarray(np.load(path), dtype=float)
-    w = 2 * np.pi * np.fft.fftfreq(WINDOW, 1.0 / 10_000)
-    fp, *_ = sim.simulate_frequency_pulses(np.zeros(WINDOW), nps, 0.0, w, nsim=n,
-                                           seed=SEED + 1000 * channel + wp,
-                                           signal_scale=0.0, dt_max=0.0)
-    return np.fft.ifft(fp, axis=1).real
+    return np.asarray(np.load(path), dtype=float)
 
 
-def build(channel, wp, sources):
-    amps, tsample, baseline = wp_selection(channel, wp)
-    N = len(amps)
-    noise = noise_traces(channel, wp, N, tsample, baseline)
+_AMPS = None
+def signal_amp(channel, wp):
+    """Ampiezza di ROI [V] di (canale, WP), dal CSV delle ampiezze. E' la STESSA che il Monte
+    Carlo inietta negli eventi: l'AP dev'essere la mediana di QUEGLI impulsi, non di altri."""
+    global _AMPS
+    if _AMPS is None:
+        _AMPS = {}
+        with open(AMP_CSV, newline="") as f:
+            for r in csv.DictReader(f):
+                a = (r.get("amplitude_mV") or "").strip()
+                if a:
+                    _AMPS[(int(r["channel"]), round(float(r["vbias_V"]), 3))] = float(a) * 1e-3
+    key = (channel, round(float(VBIAS_LIST[wp // 2]), 3))
+    if key not in _AMPS:
+        raise RuntimeError(f"ampiezza di ROI non trovata in {os.path.basename(AMP_CSV)} per {key}")
+    return _AMPS[key]
 
-    rng = np.random.default_rng(SEED + 1000 * channel + wp)
-    a = rng.permutation(amps if AMP_MODE == "real" else np.full(N, np.median(amps)))
-    shifts = rng.integers(-JITTER, JITTER + 1, N) if JITTER else np.zeros(N, int)
 
+def save_ap(channel, wp, tag, ap):
+    """Salva l'AP e restituisce la RMS del suo pretrigger, cioe' il rumore residuo."""
+    path = os.path.join(OUT_DIR, f"ch{channel}", f"simAP_{tag}_ch{channel}_wp{wp}.npy")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.save(path, ap)
+    return float(ap[:4000].std())
+
+
+def led_amp(channel, wp):
+    """Ampiezza LED mediana del WP [V]: quella degli impulsi con cui l'AP vero e' costruito."""
+    with uproot.open(root_file(channel)) as f:
+        sig = f[f"crosscorr_signal_wp{wp}"]["pass"].array(library="np")
+        return float(np.median(f["maxminusbaseline"]["amplitude"].array(library="np")[sig]))
+
+
+def build_mc(channel, wp, sources):
+    """AP = MEDIA di N_PULSES impulsi SINGOLI generati come li genera il Monte Carlo.
+
+    Tre scelte, tutte dovute al fatto che qui gli impulsi sono SIMULATI e non veri:
+
+    - NIENTE allineamento: il generatore li produce gia' allineati (il Monte Carlo non simula
+      il jitter di trigger), quindi allinearli aggiungerebbe solo l'errore dell'allineamento.
+    - NIENTE normalizzazione al massimo del singolo impulso: hanno tutti la STESSA ampiezza per
+      costruzione, quindi normalizzare non toglie una dispersione che non c'e', e in compenso
+      divide ogni traccia per un massimo gonfiato dal rumore. All'ampiezza di ROI il SNR di
+      PICCO della traccia grezza (A/sigma_raw) e' 1.4-13.6 -- il massimo non e' il picco -- e
+      misurato costa: RMS del template 6.3e-3 con la normalizzazione contro 5.6e-3 senza.
+      Sugli impulsi VERI la normalizzazione ha senso (sono LED, SNR di picco ~1200) ed e'
+      infatti quello che fa Octopus; qui no.
+    - MEDIA e non mediana: la mediana serve a reggere gli outlier dei dati veri, che in
+      simulazione non esistono, costa un fattore 1.2533 di rumore e soprattutto obbliga a
+      tenere in memoria tutti gli N impulsi. Con la media si accumula e basta, quindi N non ha
+      limite di memoria: il rumore del template scende come sigma_raw/(A*sqrt(N)).
+
+    Il template si passa al generatore NON finestrato (`np.fft.fft(tpl)`): compute_H
+    restituirebbe FFT(tpl * hanning), e la finestra verrebbe applicata una seconda volta
+    dall'addestramento."""
+    nps = load_nps(channel, wp)
+    amp = led_amp(channel, wp) if AP_AMPLITUDE == "led" else signal_amp(channel, wp)
+    w = 2 * np.pi * np.fft.fftfreq(WINDOW, 1.0 / SAMPLING_RATE)
     out = {}
     for src in sources:
         tpl = template(channel, wp, src)
-        p = noise + a[:, None] * np.array([np.roll(tpl, int(s)) for s in shifts])
+        S_raw = np.fft.fft(tpl)
+        acc = np.zeros(WINDOW)
+        for k in range(0, N_PULSES, GEN_CHUNK):
+            n = min(GEN_CHUNK, N_PULSES - k)
+            fp, *_ = sim.simulate_frequency_pulses(S_raw, nps, 0.0, w, nsim=n,
+                                                   seed=SEED + 1000 * channel + wp + k,
+                                                   signal_scale=amp, dt_max=0.0)
+            acc += np.fft.ifft(fp, axis=1).real.sum(axis=0)
+            del fp
+        ap = acc / N_PULSES
+        ap /= ap.max()
+        tag = f"APsim{src}{N_PULSES}" + ("led" if AP_AMPLITUDE == "led" else "")
+        out[src] = save_ap(channel, wp, tag, ap)
+    return out, N_PULSES, amp
+
+
+def build_realnoise(channel, wp, sources):
+    """AP iniettando il template su finestre di rumore VERE dal binario, N = quello dell'AP
+    vero e ampiezze LED. E' la sistematica sul rumore di template, non il caso nominale."""
+    amps, tsample, baseline = wp_selection(channel, wp)
+    N = len(amps)
+    noise = noise_windows(channel, tsample, baseline, N)
+    rng = np.random.default_rng(SEED + 1000 * channel + wp)
+    a = rng.permutation(amps if AMP_MODE == "real" else np.full(N, np.median(amps)))
+    shifts = rng.integers(-JITTER, JITTER + 1, N) if JITTER else np.zeros(N, int)
+    out = {}
+    for src in sources:
+        tpl = template(channel, wp, src)
+        p = noise + a[:, None] * np.array([np.roll(tpl, int(sh)) for sh in shifts])
         p /= p.max(axis=1, keepdims=True)
         ap = np.median(p, axis=0)
         ap /= ap.max()
-        tag = f"{src}{'inj' if NOISE_SOURCE == 'real' else 'gen'}"
-        path = os.path.join(OUT_DIR, f"ch{channel}", f"simAP_{tag}_ch{channel}_wp{wp}.npy")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        np.save(path, ap)
-        out[src] = float(ap[:4000].std())
-    return out, noise, N, len(tsample)
+        out[src] = save_ap(channel, wp, f"APreal{src}{N}", ap)
+    return out, N, float(np.median(amps))
 
 
 def main():
+    if MODE not in ("mc", "realnoise"):
+        raise SystemExit(f"[ERROR] MODE='{MODE}' non valido: 'mc' o 'realnoise'.")
     print(f"AP simulati -> {OUT_DIR}")
-    print("rumore: " + ("finestre VERE dal binario (tagli di Octopus + taglio RMS)"
-                        if NOISE_SOURCE == "real" else "GENERATO dalla NPS misurata") +
-          f"; ampiezze '{AMP_MODE}', jitter {JITTER}\n")
-    print(f"{'ch':>4s} {'wp':>3s} {'N':>3s} {'finestre':>9s} | {'rms rumore':>11s} {'rms veri':>10s} "
-          f"{'rapporto':>9s} | " + " ".join(f"{'AP ' + s:>10s}" for s in TEMPLATES) + f" {'AP vero':>10s}")
+    if MODE == "mc":
+        print(f"  media di {N_PULSES} impulsi GENERATI: template + rumore dalla NPS misurata, "
+              f"ampiezza '{AP_AMPLITUDE}'")
+        print(f"  tag dei file: APsim<template>{N_PULSES}\n")
+    else:
+        print(f"  iniezione su finestre di rumore VERE dal binario, N = quello dell'AP vero, "
+              f"ampiezze LED '{AMP_MODE}', jitter {JITTER}")
+        print(f"  tag dei file: APreal<template><N>\n")
+    print(f"{'ch':>4s} {'wp':>3s} {'N':>5s} {'amp [V]':>9s} | "
+          + " ".join(f"{'RMS AP ' + t:>13s}" for t in TEMPLATES)
+          + f" {'RMS AP vero':>12s} {'rapporto':>9s}")
     for ch in CHANNELS:
         for wp in WPS:
             try:
-                src = [s for s in TEMPLATES if s != "fit" or
+                src = [t for t in TEMPLATES if t != "fit" or
                        os.path.exists(os.path.join(FIT_DIR, f"bestfit_ch{ch}_wp{wp}.npy"))]
-                res, noise, N, n_avail = build(ch, wp, src)
-                # controllo: il rumore delle finestre deve valere quanto quello degli impulsi veri
-                pul = np.load(os.path.join(PULSE_DIR, f"ch{ch}", f"pulses_ch{ch}_wp{wp}.npy"))
+                if not src:
+                    raise RuntimeError("template 'fit' non trovato")
+                if MODE == "mc":
+                    res, N, amp = build_mc(ch, wp, src)
+                else:
+                    res, N, amp = build_realnoise(ch, wp, src)
+                # riferimento: il rumore residuo dell'AP VERO, quello che si sta sostituendo
                 with uproot.open(root_file(ch)) as f:
                     apv = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
                 apv /= apv.max()
-                rms_n = noise[:, :4000].std(axis=1).mean() / np.median(wp_selection(ch, wp)[0])
-                rms_r = float(np.median(pul[:, :4000].std(axis=1)))
-                print(f"{ch:>4d} {wp:>3d} {N:>3d} {n_avail:>9d} | {rms_n:11.3e} {rms_r:10.3e} "
-                      f"{rms_n / rms_r:9.2f} | " +
-                      " ".join(f"{res.get(s, float('nan')):10.2e}" for s in TEMPLATES) +
-                      f" {apv[:4000].std():10.2e}")
+                rms_true = float(apv[:4000].std())
+                first = res.get(TEMPLATES[0], float("nan"))
+                print(f"{ch:>4d} {wp:>3d} {N:>5d} {amp:9.2e} | "
+                      + " ".join(f"{res.get(t, float('nan')):13.2e}" for t in TEMPLATES)
+                      + f" {rms_true:12.2e} {first / rms_true:9.2f}")
             except Exception as e:
-                tag = "INFO salto" if "non trovato" in str(e) else "ERROR"
+                tag = "INFO salto" if "non trovat" in str(e) else "ERROR"
                 print(f"{ch:>4d} {wp:>3d}   [{tag}] {e}")
 
 
 def selftest():
-    """Autotest locale: sostituisce il lettore del binario con uno stream sintetico, cosi' la
-    selezione delle finestre e la costruzione dell'AP si verificano senza avere i .bin.
-    Controlla che l'RMS dell'AP simulato sia quello atteso per una mediana di N impulsi."""
-    ch, wp, FS, SIGMA = CHANNELS[-1], 15, 10.069444, 5e-4
+    """Verifica il rumore residuo dell'AP costruito in MODE='mc' contro la formula.
 
-    def fake_read(channel, start, count, seg_len):
-        v = np.random.default_rng(int(start)).normal(0, SIGMA, count)
-        return ((v / FS + 1.0) * 2 ** 23 * 256).astype(np.uint64)
-
-    real_sel = wp_selection
-    # lo stream sintetico ha media zero: la baseline vera di Octopus qui non va sottratta
-    globals()["wp_selection"] = lambda c, w: (real_sel(c, w)[0], real_sel(c, w)[1],
-                                              np.zeros_like(real_sel(c, w)[2]))
-    ex.bin_header = lambda c, seg=0: (0, 10000.0, FS)
-    ex.read_samples = fake_read
-    globals()["seg_length"] = lambda c: 1 << 40
+    Col template 'fit' (liscio) l'AP simulato ha SOLO il rumore nuovo, quindi la RMS del suo
+    pretrigger dev'essere quella della mediana di N impulsi normalizzati:
+        sigma_traccia / ampiezza / sqrt(N)
+    dove sigma_traccia = sqrt(sum(nps))/M e' la convenzione del generatore (verificata a parte).
+    Gira in locale: servono solo la NPS misurata, il bestfit e il CSV delle ampiezze."""
+    ch, wp, n = 91, 15, 2000
+    globals()["N_PULSES"] = n
     globals()["OUT_DIR"] = os.path.join(BASE_DIR, "m205_AP_sim", "_selftest")
-
-    # col template "fit" (liscio) l'AP simulato ha solo il rumore nuovo: si confronta con la
-    # formula della mediana. Col template "root" ci sarebbe in quadratura il rumore del template.
-    res, noise, N, n_avail = build(ch, wp, ["fit"])
-    amps = wp_selection(ch, wp)[0]
-    exp = 1.2533 * SIGMA / np.median(amps) / np.sqrt(N)
+    res, N, amp = build_mc(ch, wp, ["fit"])
+    nps = load_nps(ch, wp)
+    sigma = float(np.sqrt(nps.sum()) / WINDOW)
+    exp = sigma / amp / np.sqrt(N)
     got = res["fit"]
-    assert abs(noise[:, :4000].std(axis=1).mean() / SIGMA - 1) < 0.05, "rumore delle finestre non letto bene"
-    assert 0.75 < got / exp < 1.25, f"RMS dell'AP simulato {got:.2e}, atteso {exp:.2e}"
-    print(f"selftest ok: {n_avail} finestre disponibili, N={N}, "
-          f"RMS AP simulato {got:.2e} vs atteso {exp:.2e} ({got / exp:.2f})")
+    assert 0.85 < got / exp < 1.15, f"RMS dell'AP simulato {got:.2e}, attesa {exp:.2e}"
+    print(f"[OK] selftest: ch{ch} WP{wp}, N={N}, ampiezza {amp:.2e} V, SNR per impulso "
+          f"{amp / sigma:.0f}\n     RMS pretrigger dell'AP {got:.2e} contro l'attesa "
+          f"{exp:.2e}  ({got / exp:.2f})")
 
 
 if __name__ == "__main__":

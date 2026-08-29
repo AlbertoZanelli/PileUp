@@ -89,11 +89,11 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE  = "fitinj"      # "fitinj" | "rootinj" | "fitgen" | "rootgen"
-_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
-if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
-    raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
-                     "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
+SIM_SOURCE      = "APsimfit10000"      # tag dell'AP simulato: APsim<template><N>
+                                     # (build_simAP_injected_m205.py, MODE="mc")
+if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
+    print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "
+          "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # ── Sorgente della NPS ──────────────────────────────────────────────────────────────
 # "octopus": `averagepowerspectrum_noise_wp<wp>_medianpower` dal ROOT, come sempre. E' una
@@ -110,7 +110,15 @@ NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
 ONLY_CHANNELS = [34]
 
-_TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
+def sim_folder_tag(tag):
+    """Pezzo di nome della cartella dei risultati per un template simulato.
+    I tag nuovi (APsim.../APreal...) si bastano; i vecchi (fitinj, rootgen, ...) tengono il
+    prefisso "sim_" con cui furono creati, cosi' le cartelle esistenti restano quelle."""
+    return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
+
+
+_TAG        = ({"root": "", "fit": "_fit",
+                "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
