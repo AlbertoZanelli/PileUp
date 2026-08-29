@@ -51,7 +51,7 @@ PULSE_DIR  = os.path.join(BASE_DIR, "m205_AP_pulses")
 FIT_DIR    = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 OUT_DIR    = os.path.join(BASE_DIR, "m205_AP_sim")
 MEAS_NAME  = "000205"
-BIN_DIR    = os.path.join(DATA_DIR, "Bin file")   # sul server: "/data2/LSC/DATA/RUN14/000205"
+BIN_DIR    = "/data2/LSC/DATA/RUN14/000205" #os.path.join(DATA_DIR, "Bin file")   # sul server: "/data2/LSC/DATA/RUN14/000205"
 ex.BIN_DIR = BIN_DIR
 
 CHANNELS   = [91]           # in locale c'e' solo il binario di ch91; sul server [31, 34, 71, 83, 91]

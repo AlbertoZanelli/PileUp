@@ -71,7 +71,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "fit"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -89,7 +89,7 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE  = "fitinj"      # "fitinj" | "rootinj" | "fitgen" | "rootgen"
+SIM_SOURCE  = "rootinj"      # "fitinj" | "rootinj" | "fitgen" | "rootgen"
 _SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
 if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
     raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
@@ -103,12 +103,12 @@ if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
 #   (stessa selezione di Octopus + taglio RMS sulla finestra intera, media del periodogramma).
 #   Riproduce la RMS di finestre indipendenti entro lo 0.4%. E' gia' nella convenzione giusta:
 #   niente flattop, niente M^2/T. Con questa sigma scende del 18-30% e il BI cala.
-NPS_SOURCE  = "clean"       # "octopus" | "clean"
+NPS_SOURCE  = "octopus"       # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [34]
+ONLY_CHANNELS = [31, 71, 83]
 
 _TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
@@ -138,11 +138,11 @@ SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in se
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
-MAX_PARALLEL_JOBS = 135
+MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
-RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
+RESET_CSV         = False      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
 # Righe di setup ambiente eseguite all'inizio di OGNI job (conda / venv / module ...).
 # RIEMPILE in base al tuo ambiente: se i moduli (torch, uproot, src/...) non sono nel

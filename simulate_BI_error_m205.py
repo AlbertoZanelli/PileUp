@@ -75,7 +75,7 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_wiener_sim_rootinj_npsclean_swna1"
+RESULTS_NAME = "m205_results_wiener_root_npsclean_swna1"
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -146,7 +146,7 @@ ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali del CSV
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
 
 # Parametri della simulazione (gli stessi del calcolo analitico in analyse_BI_m205.py)
-NSIM        = 20_000        # eventi per popolazione; l'errore MC scala come 1/sqrt(NSIM)
+NSIM        = 50_000        # eventi per popolazione; l'errore MC scala come 1/sqrt(NSIM)
 CHUNK       = 2_000         # eventi generati per volta. simulate_frequency_pulses alloca sei
                             # array (n, 10000) COMPLESSI: a n=20000 sono 3.2 GB l'uno, ~19 GB in
                             # tutto, e il processo viene ucciso dall'OOM killer. Generando a
@@ -185,11 +185,11 @@ SUBMIT_MODE       = "qsub"    # "qsub" = un job per coppia ; "local" = in sequen
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 4         # con CHUNK=1000 il picco misurato e' ~1.5 GB
-MAX_PARALLEL_JOBS = 100
+MAX_PARALLEL_JOBS = 150
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "MC"      # nome job / throttling via qstat
 EXPORT_ENV        = True      # "-V" al qsub: esporta l'ambiente corrente
-RESET_CSV         = True      # l'orchestratore riparte da un CSV pulito (solo header)
+RESET_CSV         = False      # l'orchestratore riparte da un CSV pulito (solo header)
 ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
 LOG_DIR           = os.path.join(RESULTS_DIR, "logs_mc")
 JOBS_DIR          = os.path.join(RESULTS_DIR, "jobs_mc")
