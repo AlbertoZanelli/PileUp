@@ -158,7 +158,7 @@ if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
                      "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [34, 91]
+ONLY_CHANNELS   = [31, 71, 83] #[34, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -249,7 +249,7 @@ MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
-RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
+RESET_CSV         = False      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
 # Righe di setup ambiente eseguite all'inizio di OGNI job (conda / venv / module ...).
 # RIEMPILE in base al tuo ambiente: se i moduli (torch, uproot, src/...) non sono nel

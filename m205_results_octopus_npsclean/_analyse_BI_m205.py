@@ -108,7 +108,7 @@ NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [34]
+ONLY_CHANNELS = [31, 71, 83, 91]
 
 _TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
@@ -138,11 +138,11 @@ SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in se
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 4         # GB per job
-MAX_PARALLEL_JOBS = 135
+MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
-RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
+RESET_CSV         = False      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
 # Righe di setup ambiente eseguite all'inizio di OGNI job (conda / venv / module ...).
 # RIEMPILE in base al tuo ambiente: se i moduli (torch, uproot, src/...) non sono nel

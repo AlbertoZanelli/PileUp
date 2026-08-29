@@ -149,7 +149,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
 TEMPLATE_SOURCE = "root"      # "fit" | "root" | "sim"
-SIM_SOURCE      = "fitinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
+SIM_SOURCE      = "rootinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
 USE_R           = False      # True solo con "root" (vedi sopra)
 
 _SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
@@ -158,7 +158,7 @@ if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
                      "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [34]
+ONLY_CHANNELS   = [31, 71, 83, 91] #[34, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -177,9 +177,51 @@ NPS_SOURCE  = "clean"     # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
+# ── Condizione di validita' del modello analitico: penalita' su s = sigma_i/mu_i ─────
+# s_i = sqrt(var_i)/signal_amp e' la risoluzione RELATIVA dell'ampiezza misurata dal filtro
+# di banda i, cioe' 1/SNR di quel filtro (con f=1 si riduce a sigma_OF/ampiezza). E' il
+# rapporto fra la (A.5) e la (A.1) del paper.
+#
+# PERCHE' SERVE. La sigma_Y analitica (A.7) e' uno sviluppo al PRIM'ORDINE, valido solo per
+# s_i << 1; il paper lo dichiara in sez. 2.2 ("standard deviations and covariance small
+# compared to their non-zero mean values", con rimando a Hinkley per la distribuzione esatta
+# del rapporto). Con lambda ADDESTRABILE l'ottimizzatore esce da quel dominio: manda lambda a
+# zero, rende f1 e f2 quasi proporzionali e ottiene una sigma_Y piccola come RESIDUO di una
+# cancellazione al 99.99% fra i termini di (A.7). Lo stimatore vero (massimo su +-20 campioni,
+# eq. 10) non consegna quella cancellazione, e il BI vero non migliora affatto: nei casi
+# collassati il MC misura una reiezione del 9-10%, cioe' quella che si ottiene tagliando a
+# caso, mentre l'analitico ne dichiara il 45%.
+#
+# LA SOGLIA NON E' ARBITRARIA: misurata su 75 coppie (canale, WP) con
+# diagnose_lambda_collapse_m205.py --diag:
+#     s <= 0.15  ->  BI_MC/BI_analitico = 1.00-1.09   (47 punti)
+#     s >  0.20  ->  BI_MC/BI_analitico = 1.57-1.91   (28 punti)
+# e il bias della ricerca del massimo segue bias ~ 1 + 3.2*s (correlazione 0.98): tenendo s
+# sotto controllo si controllano ENTRAMBE le rotture del modello con un solo numero.
+#
+# LA PENALITA' ENTRA SOLO NELLA LOSS DI TRAINING. Il BI scritto nel CSV resta K * J con la J
+# NON penalizzata, cioe' la metrica del paper; s1 e s2 finiscono in colonna come certificato
+# del dominio di validita'. (Il BI da riportare resta comunque quello Monte Carlo di
+# simulate_BI_error_m205.py, come fa il paper in sez. 4.5.)
+#
+#   None                   -> spenta: identica al comportamento precedente
+#   ("barrier", S_MAX, W)  -> W * sum_i relu(s_i/S_MAX - 1)^2 : barriera morbida, ESATTAMENTE
+#                             NULLA per s_i <= S_MAX. Dove il modello era gia' valido non
+#                             cambia nulla (47 punti su 75 restano identici) -> preferita.
+#   ("wna", W)             -> W * (s1^2 + s2^2) : senza soglia. Penalizza l'amplificazione del
+#                             rumore dei filtri (la "White Noise Amplification" con cui la
+#                             letteratura del filtraggio inverso caratterizza le deconvoluzioni)
+#                             come un termine alla Tikhonov. ATTENZIONE: senza soglia non vuol
+#                             dire senza scala -- il peso W ne fissa una implicita,
+#                             s_eff ~ sqrt(J/2W) con J ~ 0.3 -- e a differenza della barriera
+#                             distorce (poco) anche i WP sani.
+S_PENALTY = None #("wna", 1.0)
+
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else "sim_" + SIM_SOURCE)
                + ("_R" if USE_R else "")
-               + ("_npsclean" if NPS_SOURCE == "clean" else ""))
+               + ("_npsclean" if NPS_SOURCE == "clean" else "")
+               + ("" if not S_PENALTY else
+                  ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1])))
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -207,7 +249,7 @@ MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job
-RESET_CSV         = True      # se True l'orchestratore riparte da un CSV pulito (solo header)
+RESET_CSV         = False      # se True l'orchestratore riparte da un CSV pulito (solo header)
 
 # Righe di setup ambiente eseguite all'inizio di OGNI job (conda / venv / module ...).
 # RIEMPILE in base al tuo ambiente: se i moduli (torch, uproot, src/...) non sono nel
@@ -300,7 +342,7 @@ ACCEPTANCE = 0.9
 WINDOW_SIZE = 10_000
 SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
-N_TRIALS = 800
+N_TRIALS = 500
 
 # ── Regolarizzazione R(f) del template (estimatore A) - attiva solo se USE_R
 #   N (impulsi mediati nel template) NON e' fissato: si ricava per ogni (canale, WP)
@@ -320,8 +362,11 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #   beta_Hz       = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
 #   rho_t         = SNR * beta  = figura di merito temporale per il pile-up (Hz)
 #   lambda_wiener = fattore di modulazione del rumore del Wiener, ottimizzato
+#   s1, s2        = risoluzione relativa dei due filtri di banda (sigma_i/mu_i): certificato
+#                   del dominio di validita' del modello analitico, vedi S_PENALTY
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "lambda_wiener", "template", "use_R", "beta_R", "n_events", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "lambda_wiener", "template", "use_R", "beta_R", "n_events",
+                  "s1", "s2", "s_penalty", "BI", "J_final"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -370,6 +415,26 @@ def save_filters_npy(dirpath: str, channel, wp, f1, f2, kernel):
     np.save(os.path.join(dirpath, f"f1_ch{channel}_wp{wp}.npy"), _independent_half(f1))
     np.save(os.path.join(dirpath, f"f2_ch{channel}_wp{wp}.npy"), _independent_half(f2))
     np.save(os.path.join(dirpath, f"kernel_ch{channel}_wp{wp}.npy"), _independent_half(kernel))
+
+
+def make_s_penalty():
+    """Callable f(s1, s2) -> tensore da passare a optimize_filters_wiener_lambda, oppure
+    None se S_PENALTY e' spenta (in quel caso il training e' identico a prima).
+    La penalita' entra SOLO nella loss: J_values, e quindi il BI del CSV, restano non
+    penalizzati. Vedi il commento su S_PENALTY in testa al file."""
+    if not S_PENALTY:
+        return None
+    import torch
+    kind = S_PENALTY[0]
+    if kind == "barrier":
+        _, s_max, weight = S_PENALTY
+        return lambda s1, s2: weight * (torch.relu(s1 / s_max - 1) ** 2
+                                        + torch.relu(s2 / s_max - 1) ** 2)
+    if kind == "wna":
+        _, weight = S_PENALTY
+        return lambda s1, s2: weight * (s1 ** 2 + s2 ** 2)
+    raise SystemExit(f"[ERROR] S_PENALTY non valida: {S_PENALTY!r} "
+                     "(usare None, ('barrier', s_max, w) o ('wna', w))")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -443,10 +508,18 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             f2_init = None,
             lambda_init = 1.0,
             use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
+            s_penalty = make_s_penalty(),
             n_trials = N_TRIALS,
             use_interp = True,
             verbose = False,
         )
+
+    # Risoluzione relativa dei due filtri addestrati, s_i = sigma_i/mu_i (= (A.5)/(A.1) del
+    # paper): e' il certificato del dominio di validita' del calcolo analitico. Misurato su
+    # m205: s <= 0.15 -> BI_MC/BI_analitico <= 1.09; s > 0.2 -> >= 1.57.
+    var1, var2, _ = an.compute_vars_wiener(W_unit, S_torch, nps, f1_opt, f2_opt)
+    s1 = float(var1) ** 0.5 / signal_amp
+    s2 = float(var2) ** 0.5 / signal_amp
 
     BI_estimate = float(J_values[-1]) * fn.K
 
@@ -464,6 +537,9 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "use_R": int(USE_R),
         "beta_R": BETA_R if USE_R else "",
         "n_events": n_events,
+        "s1": s1,
+        "s2": s2,
+        "s_penalty": "" if not S_PENALTY else ":".join(str(x) for x in S_PENALTY),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
         # Filtri di banda e kernel di Wiener (vettori), salvati a parte come .npy in
