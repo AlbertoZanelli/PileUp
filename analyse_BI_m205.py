@@ -71,7 +71,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "fit"    # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -103,12 +103,12 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
 #   (stessa selezione di Octopus + taglio RMS sulla finestra intera, media del periodogramma).
 #   Riproduce la RMS di finestre indipendenti entro lo 0.4%. E' gia' nella convenzione giusta:
 #   niente flattop, niente M^2/T. Con questa sigma scende del 18-30% e il BI cala.
-NPS_SOURCE  = "octopus"       # "octopus" | "clean"
+NPS_SOURCE  = "clean"       # "octopus" | "clean"
 NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [34]
+ONLY_CHANNELS = [31, 34, 71, 83, 91]   # None | [] = tutti i canali con ampiezza nel CSV
 
 def sim_folder_tag(tag):
     """Pezzo di nome della cartella dei risultati per un template simulato.

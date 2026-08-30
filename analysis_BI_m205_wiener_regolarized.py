@@ -164,7 +164,7 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
           "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [91] #[34, 91]
+ONLY_CHANNELS   = [31, 34, 71, 83, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"

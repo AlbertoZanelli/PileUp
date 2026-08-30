@@ -44,9 +44,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # (injection)" del paper). Senza "@" si usa MC_GEN.
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
-SETS = ["m205_results_octopus_npsclean",
-        "m205_results_wiener_root_npsclean_swna1",
-        "m205_results_wiener_root_npsclean"]
+SETS = ["m205_results_octopus_APsimfit10000_npsclean",
+        "m205_results_wiener_APsimfit10000_npsclean_swna1"]
 
 # Coppie per i pannelli di differenza (z e Delta BI).
 #   None                          -> ogni set contro il PRIMO della lista
@@ -56,7 +55,7 @@ SETS = ["m205_results_octopus_npsclean",
 #                                    sbaglia. Si disegna tratteggiata, per distinguerla dai
 #                                    confronti fra set.
 # Le due forme si possono mescolare nella stessa lista, per esempio:
-PAIRS = [("OF-root:mc", "W-root:mc"), ("OF-root:mc", "Wwna-root:mc")]
+PAIRS = [("OF-APsimfit10000:mc", "Wwna-APsimfit10000:mc")]
 #            ("Wwna-root:analytic", "Wwna-root:mc")]
 # Il default (None) mette solo i confronti fra set: le coppie mc-vs-analytic si aggiungono
 # a mano, altrimenti i due pannelli diventano illeggibili con piu' di due set.
@@ -77,7 +76,7 @@ ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] =
 # simulate_BI_error). Si tengono solo le righe che combaciano.
 # Non confondere MC_GEN con il template del TRAINING, che sta nel nome della cartella: qui si
 # sceglie cosa e' stato INIETTATO, la' cosa e' stato usato per addestrare.
-MC_GEN = "root"          # "root" | "fit"
+MC_GEN = "fit"           # "root" | "fit"
 MC_CSV = "BI_mc_error_m205.csv"
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
 GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
@@ -118,8 +117,10 @@ def describe(spec):
         train = "root"
     elif tag == "_fit":
         train = "fit"
+    elif tag.startswith(("_APsim", "_APreal")):
+        train = tag[1:]                      # nomenclatura nuova: APsim<template><N>
     elif tag.startswith("_sim_"):
-        train = tag[len("_sim_"):]
+        train = tag[len("_sim_"):]           # vecchia (fitinj/rootinj/...): letta ancora
     else:
         raise SystemExit(f"[ERROR] non so dedurre il template di training da '{folder}'")
     # il template iniettato compare solo se NON e' quello di default: altrimenti sarebbe

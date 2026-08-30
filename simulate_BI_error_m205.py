@@ -75,7 +75,7 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_wiener_APsimfit10000_npsclean_swna1"
+RESULTS_NAME = "m205_results_octopus_APsimfit10000_npsclean"
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
