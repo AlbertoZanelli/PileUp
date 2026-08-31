@@ -69,7 +69,10 @@ SAMPLING_RATE = 10_000
 # ── Come si costruisce l'AP ─────────────────────────────────────────────────
 MODE     = "mc"          # "mc" = impulsi generati come nel Monte Carlo | "realnoise" = iniezione
                          #        su finestre vere dal binario (serve il .bin, solo sul server)
-N_PULSES = 10000         # solo per MODE="mc": quanti impulsi mediare. Il rumore del template
+N_PULSES = 1000          # solo per MODE="mc": quanti impulsi mediare. Un intero, oppure
+                         # "match" = quanti servono perche' il template abbia lo STESSO rumore
+                         # dell'AP vero di quel (canale, WP) -- vedi match_n(). Il numero
+                         # effettivo finisce nel tag del file, quindi resta scritto nel nome. Il rumore del template
                          # e' sigma_raw / (A * sqrt(N)). Con la media si accumula, quindi N non
                          # ha limiti di memoria: costa solo CPU (~4.6 s ogni 5000 impulsi).
                          # Misurato su ch91 WP15 all'ampiezza di ROI (sigma_raw/A = 0.364):
@@ -90,7 +93,7 @@ N_PULSES = 10000         # solo per MODE="mc": quanti impulsi mediare. Il rumore
 #       SNR di picco ~1200). Da' un template ~10 volte piu' pulito di quello vero con N=5000,
 #       ma NON e' la media degli eventi del Monte Carlo: e' un altro oggetto. Il tag del file
 #       prende il suffisso "led" per non confonderli.
-AP_AMPLITUDE = "roi"     # "led" | "roi"
+AP_AMPLITUDE = "led"     # "led" | "roi"
 GEN_CHUNK = 500          # impulsi generati per volta: il simulatore alloca sei array complessi
                          # (n, 10000), a 5000 in un colpo sono ~4 GB l'uno.
 
@@ -222,6 +225,24 @@ def led_amp(channel, wp):
         return float(np.median(f["maxminusbaseline"]["amplitude"].array(library="np")[sig]))
 
 
+def match_n(channel, wp, nps, amp):
+    """N che rende il rumore del template UGUALE a quello dell'AP vero.
+
+    L'esperimento ha un AP costruito da 36-39 impulsi LED, con una RMS di pretrigger ben
+    definita. Riprodurla e' la scelta fedele: un template piu' pulito e' ottimista, uno piu'
+    rumoroso e' pessimista, e il rumore del template NON e' un dettaglio -- e' un'impronta
+    deterministica che entra in S e nel kernel, che il Monte Carlo sente e il modello
+    analitico no. Misurato: passando da template pulito (fit) a APsim con 10^4 impulsi, il
+    rapporto MC/analitico peggiora da 1.02-1.08 a 1.03-1.21, e il Wiener passa da battere il
+    filtro ottimo (45 punti su 70) a perderci (22 su 75).
+        sigma_raw/(A*sqrt(N)) = RMS_pretrigger(AP vero)   ->   N = (sigma_raw/(A*RMS))^2"""
+    with uproot.open(root_file(channel)) as f:
+        ap = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), float)
+    ap /= ap.max()
+    sigma = float(np.sqrt(nps.sum()) / WINDOW)
+    return int(round((sigma / amp / float(ap[:4000].std())) ** 2))
+
+
 def build_mc(channel, wp, sources):
     """AP = MEDIA di N_PULSES impulsi SINGOLI generati come li genera il Monte Carlo.
 
@@ -246,24 +267,28 @@ def build_mc(channel, wp, sources):
     dall'addestramento."""
     nps = load_nps(channel, wp)
     amp = led_amp(channel, wp) if AP_AMPLITUDE == "led" else signal_amp(channel, wp)
+    n_pulses = match_n(channel, wp, nps, amp) if N_PULSES == "match" else int(N_PULSES)
     w = 2 * np.pi * np.fft.fftfreq(WINDOW, 1.0 / SAMPLING_RATE)
     out = {}
     for src in sources:
         tpl = template(channel, wp, src)
         S_raw = np.fft.fft(tpl)
         acc = np.zeros(WINDOW)
-        for k in range(0, N_PULSES, GEN_CHUNK):
-            n = min(GEN_CHUNK, N_PULSES - k)
+        for k in range(0, n_pulses, GEN_CHUNK):
+            n = min(GEN_CHUNK, n_pulses - k)
             fp, *_ = sim.simulate_frequency_pulses(S_raw, nps, 0.0, w, nsim=n,
                                                    seed=SEED + 1000 * channel + wp + k,
                                                    signal_scale=amp, dt_max=0.0)
             acc += np.fft.ifft(fp, axis=1).real.sum(axis=0)
             del fp
-        ap = acc / N_PULSES
+        ap = acc / n_pulses
         ap /= ap.max()
-        tag = f"APsim{src}{N_PULSES}" + ("led" if AP_AMPLITUDE == "led" else "")
+        # con "match" il tag NON porta il numero: N cambia da WP a WP, mentre SIM_SOURCE nei
+        # programmi di analisi e' una stringa sola per tutta la campagna.
+        tag = (f"APsim{src}match" if N_PULSES == "match" else f"APsim{src}{n_pulses}")
+        tag += "led" if AP_AMPLITUDE == "led" else ""
         out[src] = save_ap(channel, wp, tag, ap)
-    return out, N_PULSES, amp
+    return out, n_pulses, amp
 
 
 def build_realnoise(channel, wp, sources):
