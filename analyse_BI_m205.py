@@ -89,7 +89,7 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE      = "APsimfit10000"      # tag dell'AP simulato: APsim<template><N>
+SIM_SOURCE      = "APsimfit10000led"      # tag dell'AP simulato: APsim<template><N>
                                      # (build_simAP_injected_m205.py, MODE="mc")
 if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
     print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "

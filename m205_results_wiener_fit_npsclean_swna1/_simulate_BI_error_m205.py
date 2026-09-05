@@ -83,7 +83,7 @@ RESULTS_NAME = "m205_results_wiener_fit_npsclean_swna1"
 #    E' l'UNICA scelta libera: se coincide con il template del training il conto e'
 #    auto-consistente e serve solo da validazione; se differisce, misuri quanto costa
 #    addestrare sul template sbagliato.
-GEN_TEMPLATE = "root"       # "root" | "fit"
+GEN_TEMPLATE = "fit"        # "root" | "fit"
 
 # Il rumore degli eventi e' SEMPRE generato (400-600 finestre vere per WP non bastano per
 # NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.
@@ -111,8 +111,10 @@ def _parse_results_name(name):
         train, sim = "root", None
     elif tag == "_fit":
         train, sim = "fit", None
+    elif tag.startswith(("_APsim", "_APreal")):
+        train, sim = "sim", tag[1:]          # nomenclatura nuova: il tag si basta
     elif tag.startswith("_sim_"):
-        train, sim = "sim", tag[len("_sim_"):]
+        train, sim = "sim", tag[len("_sim_"):]   # vecchia (fitinj/rootinj/...): letta ancora
     else:
         raise SystemExit(f"[ERROR] non so dedurre il template dal nome '{name}' (resto: '{tag}'). "
                          "Cartelle come m205_results_wiener_freq non sono supportate.")
@@ -141,6 +143,9 @@ NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 if GEN_TEMPLATE not in ("root", "fit"):
     raise SystemExit(f"[ERROR] GEN_TEMPLATE='{GEN_TEMPLATE}' non valido: 'root' o 'fit'.")
+# Dentro UNA cartella di risultati convivono piu' campagne Monte Carlo nello STESSO file:
+# a distinguerle e' la colonna `gen` (template iniettato), non il nome. Quella colonna, con
+# canale e WP, e' l'identita' di una riga -- vedi OVERWRITE e row_key().
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali del CSV
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
@@ -189,13 +194,17 @@ MAX_PARALLEL_JOBS = 150
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "MC"      # nome job / throttling via qstat
 EXPORT_ENV        = True      # "-V" al qsub: esporta l'ambiente corrente
-RESET_CSV         = True      # l'orchestratore riparte da un CSV pulito (solo header)
+OVERWRITE         = True      # True: se nel CSV c'e' gia' una riga per lo STESSO punto della
+                              # STESSA campagna (canale, WP, gen), la sostituisce sul
+                              # posto; se non c'e', la aggiunge. Cosi' si rilancia un WP solo
+                              # senza azzerare niente e senza accumulare doppioni.
+                              # False: aggiunge sempre in fondo, doppioni compresi.
 ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
 LOG_DIR           = os.path.join(RESULTS_DIR, "logs_mc")
 JOBS_DIR          = os.path.join(RESULTS_DIR, "jobs_mc")
 
-CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "train", "nps", "filter", "BI_analytic",
-                  "BI_mc", "sigma_BI", "rp", "sigma_rp", "nsim", "ratio"]
+CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "train", "nps", "filter",
+                  "BI_analytic", "BI_mc", "sigma_BI", "rp", "sigma_rp", "nsim", "ratio"]
 
 
 def flattop_power_factor(n: int) -> float:
@@ -414,26 +423,59 @@ def make_sim_ap(rows, gen):
             print(f"{ch:>4d} {wp:>3d}   {tag} {e}")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# CSV condiviso fra i job
-# ═════════════════════════════════════════════════════════════════════════════
-def init_csv(path):
-    """Crea il CSV (sovrascrivendolo) con la sola riga di header."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="") as f:
-        csv.DictWriter(f, fieldnames=CSV_FIELDNAMES).writeheader()
+ROW_KEY = ("channel", "wp", "gen")
+
+
+def row_key(r):
+    """Identita' di una riga: il PUNTO e la CAMPAGNA. Due run che differiscono per il
+    template iniettato sono righe diverse, non la stessa riga riscritta."""
+    return tuple(str(r.get(k, "") or "") for k in ROW_KEY)
+
+
+def read_rows(path):
+    """Righe del CSV, con un controllo di coerenza dello schema.
+
+    Un file con UN header e righe di due lunghezze diverse (tipico: campagna ripresa dopo aver
+    aggiunto colonne al programma, senza riscrivere l'header) e' il modo peggiore di sbagliare:
+    csv assegna per posizione, le colonne slittano e i valori finiscono nella colonna sbagliata
+    senza errori. Meglio fermarsi."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return []
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    for n, r in enumerate(rows, start=2):
+        if r.get(None) is not None or any(v is None for v in r.values()):
+            raise RuntimeError(f"{path}: la riga {n} non ha lo stesso numero di campi "
+                               f"dell'header. Il file mescola due schemi: le colonne slittano. "
+                               f"Riscrivilo con l'header completo, o cancellalo e rifallo.")
+    return rows
 
 
 def append_row_to_csv(path, row):
-    """Appende una riga in modo sicuro fra processi concorrenti (flock)."""
+    """Scrive la riga nel CSV in modo sicuro fra processi concorrenti (flock esclusivo su
+    tutta la lettura-modifica-riscrittura).
+
+    Con OVERWRITE, una riga con la stessa identita' viene SOSTITUITA sul posto invece che
+    aggiunta: rilanciare un punto lo aggiorna, non lo duplica. Il file viene comunque
+    riscritto con l'header corrente, quindi un CSV nato con meno colonne si allinea da solo
+    (i campi che allora non esistevano restano vuoti)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", newline="") as f:
+    new = {k: row.get(k) for k in CSV_FIELDNAMES}
+    with open(path, "a+", newline="") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            w = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
-            if f.tell() == 0:
-                w.writeheader()
-            w.writerow({k: row.get(k) for k in CSV_FIELDNAMES})
+            rows = read_rows(path)
+            for i, r in enumerate(rows):
+                if OVERWRITE and row_key(r) == row_key(new):
+                    rows[i] = r | new          # tiene le colonne vecchie non piu' scritte
+                    break
+            else:
+                rows.append(new)
+            f.seek(0)
+            f.truncate()
+            w = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES, restval="", extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
             f.flush()
             os.fsync(f.fileno())
         finally:
@@ -587,6 +629,8 @@ def main():
     print(f"  eventi generati da '{GEN_TEMPLATE}'"
           + ("  [auto-consistente: e' anche il template del training]"
              if GEN_TEMPLATE == TRAIN_TEMPLATE else "  [incrociato]"))
+    print(f"  righe nel CSV: {'sovrascritte' if OVERWRITE else 'accodate'} "
+          f"(chiave: canale, WP, gen)")
     print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, chunk={CHUNK}, "
           f"paired_noise={PAIRED_NOISE}, fold_ratio={FOLD_RATIO}, "
           f"detector_sigma={DETECTOR_SIGMA}\n")
@@ -595,8 +639,6 @@ def main():
 
     if SUBMIT_MODE == "local":
         print("[INFO] SUBMIT_MODE='local': eseguo i task in sequenza (no qsub).\n")
-        if RESET_CSV:
-            init_csv(OUT_CSV)
         for ch, wp in tasks:
             run_worker(ch, wp)
         print(f"\nFatto. Risultati in {OUT_CSV}")
@@ -609,8 +651,6 @@ def main():
 
     # I job devono usare una COPIA di questo file, non l'originale: vedi freeze_script().
     freeze_script()
-    if RESET_CSV:
-        init_csv(OUT_CSV)
 
     submitted, failed = 0, []
     for ch, wp in tasks:

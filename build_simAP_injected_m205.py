@@ -69,7 +69,7 @@ SAMPLING_RATE = 10_000
 # ── Come si costruisce l'AP ─────────────────────────────────────────────────
 MODE     = "mc"          # "mc" = impulsi generati come nel Monte Carlo | "realnoise" = iniezione
                          #        su finestre vere dal binario (serve il .bin, solo sul server)
-N_PULSES = 1000          # solo per MODE="mc": quanti impulsi mediare. Un intero, oppure
+N_PULSES = 10000          # solo per MODE="mc": quanti impulsi mediare. Un intero, oppure
                          # "match" = quanti servono perche' il template abbia lo STESSO rumore
                          # dell'AP vero di quel (canale, WP) -- vedi match_n(). Il numero
                          # effettivo finisce nel tag del file, quindi resta scritto nel nome. Il rumore del template

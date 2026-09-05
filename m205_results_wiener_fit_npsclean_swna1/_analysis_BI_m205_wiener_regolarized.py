@@ -148,17 +148,23 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #     suffisso -> da dove viene il RUMORE:
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-TEMPLATE_SOURCE = "fit"      # "fit" | "root" | "sim"
-SIM_SOURCE      = "rootinj"   # "fitinj" | "rootinj" | "fitgen" | "rootgen"
+TEMPLATE_SOURCE = "fit"       # "fit" | "root" | "sim"
+SIM_SOURCE      = "APsimfit10000led"   # tag dell'AP simulato, cioe' il pezzo <tag> in
+                                   # m205_AP_sim/ch<ch>/simAP_<tag>_ch<ch>_wp<wp>.npy.
+                                   # Prodotto da build_simAP_injected_m205.py:
+                                   #   APsim<template><N>   MODE="mc"        (consigliato)
+                                   #   APreal<template><N>  MODE="realnoise" (sistematica)
+                                   # I vecchi "fitinj"/"rootinj"/"fitgen"/"rootgen" restano
+                                   # leggibili ma non si producono piu': il suffisso inj/gen
+                                   # diceva da dove veniva il RUMORE, non il template.
 USE_R           = False      # True solo con "root" (vedi sopra)
 
-_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
-if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
-    raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
-                     "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
+if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
+    print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "
+          "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [91] #[34, 91]
+ONLY_CHANNELS   = [83] #[31, 34, 71, 83, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -217,7 +223,15 @@ NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 #                             distorce (poco) anche i WP sani.
 S_PENALTY = ("wna", 1.0)
 
-_TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else "sim_" + SIM_SOURCE)
+def sim_folder_tag(tag):
+    """Pezzo di nome della cartella dei risultati per un template simulato.
+    I tag nuovi (APsim.../APreal...) si bastano; i vecchi (fitinj, rootgen, ...) tengono il
+    prefisso "sim_" con cui furono creati, cosi' le cartelle esistenti restano quelle."""
+    return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
+
+
+_TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
+                sim_folder_tag(SIM_SOURCE))
                + ("_R" if USE_R else "")
                + ("_npsclean" if NPS_SOURCE == "clean" else "")
                + ("" if not S_PENALTY else
@@ -542,6 +556,11 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "s_penalty": "" if not S_PENALTY else ":".join(str(x) for x in S_PENALTY),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        # Storia dell'addestramento (non entra nel CSV): serve a vedere SE e DOVE lambda si
+        # ferma. J e' sempre quella FISICA, senza penalita', quindi le due curve insieme
+        # dicono anche quanto la penalita' ha spostato l'ottimo.
+        "J_hist": np.asarray(J_values, dtype=float),
+        "lam_hist": np.asarray(lambda_values, dtype=float),
         # Filtri di banda e kernel di Wiener (vettori), salvati a parte come .npy in
         # FILTERS_DIR; non entrano nel BI CSV perche' append_row_to_csv tiene solo
         # CSV_FIELDNAMES. Il filtro totale applicato ai dati e' g_i = f_i * kernel.
@@ -596,6 +615,10 @@ def run_worker(channel: int, wp: int):
                                  signal_amp, n_events, SAMPLING_RATE, shared, device)
         append_row_to_csv(OUTPUT_CSV, res)
         save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["kernel"])
+        hist_dir = os.path.join(OUTPUT_DIR, "training_history")
+        os.makedirs(hist_dir, exist_ok=True)
+        np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"),
+                 J=res["J_hist"], lam=res["lam_hist"])
         print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
 
     except Exception as e:
