@@ -75,7 +75,15 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_octopus_APsimfit10000_npsclean"
+RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean"
+
+# 1b) COMPARE: MODALITA' CONFRONTO. Altre cartelle da simulare INSIEME a RESULTS_NAME: per ogni
+#     seed gli eventi si generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna
+#     scrive nel proprio CSV. Gli eventi sono identici per costruzione (e' su questo che si regge
+#     l'errore appaiato di Delta BI) e la generazione, ~70% del tempo, si paga una volta sola.
+#     Log, job e copia congelata stanno in RESULTS_NAME. [] = una cartella sola, come prima.
+COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean",
+           "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -121,18 +129,16 @@ def _parse_results_name(name):
     return base, train, sim, nps
 
 
-FILTER_TYPE, TRAIN_TEMPLATE, SIM_AP_FROM, NPS_SOURCE = _parse_results_name(RESULTS_NAME)
-
-RESULTS_DIR = os.path.join(BASE_DIR, RESULTS_NAME)
-if not os.path.isdir(RESULTS_DIR):
-    raise SystemExit(f"[ERROR] cartella non trovata: {RESULTS_DIR}")
-# analyse_BI_* scrive "BI_results_*<tag>.csv": si prende quello che c'e' nella cartella.
-_csv = glob.glob(os.path.join(RESULTS_DIR, "BI_results_*.csv"))
-if not _csv:
-    raise SystemExit(f"[ERROR] nessun CSV dei risultati in {RESULTS_DIR}")
-BI_CSV      = _csv[0]
-FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")
-OUT_CSV     = os.path.join(RESULTS_DIR, "BI_mc_error_m205.csv")
+def folder_info(name):
+    """Tutto quello che serve di una cartella di risultati, dedotto dal nome."""
+    filt, train, sim_from, nps = _parse_results_name(name)
+    d = os.path.join(BASE_DIR, name)
+    # analyse_BI_* scrive "BI_results_*<tag>.csv": si prende quello che c'e' nella cartella.
+    csvs = glob.glob(os.path.join(d, "BI_results_*.csv"))
+    if not csvs:
+        raise SystemExit(f"[ERROR] cartella o CSV dei risultati mancante: {d}")
+    return dict(name=name, dir=d, bi_csv=csvs[0], filters_dir=os.path.join(d, "trained_filters"),
+                out_csv=os.path.join(d, OUT_NAME), filter=filt, train=train, sim=sim_from, nps=nps)
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -152,11 +158,30 @@ ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
 
 # Parametri della simulazione (gli stessi del calcolo analitico in analyse_BI_m205.py)
 NSIM        = 50_000        # eventi per popolazione; l'errore MC scala come 1/sqrt(NSIM)
-CHUNK       = 2_000         # eventi generati per volta. simulate_frequency_pulses alloca sei
-                            # array (n, 10000) COMPLESSI: a n=20000 sono 3.2 GB l'uno, ~19 GB in
-                            # tutto, e il processo viene ucciso dall'OOM killer. Generando a
-                            # blocchi il picco scende come CHUNK/NSIM (a 1000: ~1 GB).
+CHUNK       = 500           # eventi generati per volta. simulate_frequency_pulses alloca sei
+                            # array (n, 10000) COMPLESSI (a n=2000: 320 MB l'uno, ~2 GB in tutto):
+                            # NSIM tutti insieme farebbero uccidere il processo per memoria.
+                            # MISURATO (ch31 WP1, una run da 50 000): 250 -> 100 s, 500 -> 99 s,
+                            # 1000 -> 118 s, 2000 -> 145 s, 4000 -> 165 s: piu' piccolo = piu'
+                            # veloce (cache) fino a ~500. CAMBIA GLI EVENTI (vedi simulate_psd):
+                            # stesso valore in tutte le campagne che si confrontano.
 SEED        = 1234
+N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC: il seed SEED + i genera UNA
+                            # simulazione completa da NSIM eventi per popolazione, una riga per
+                            # seed (colonna `seed`). Servono all'errore di Delta BI: due cartelle
+                            # girate con gli stessi seed vedono gli STESSI eventi, quindi Delta BI
+                            # seed per seed contiene la covarianza e la sua dispersione e' l'errore.
+                            # ATTENZIONE: gli eventi dipendono anche da CHUNK (vedi simulate_psd):
+                            # stesso CHUNK in tutte le cartelle che si confrontano.
+# Un seed solo -> il CSV di sempre; piu' seed -> un CSV A PARTE, col numero di seed nel nome, cosi'
+# le due modalita' non si mescolano. In entrambi ogni riga ha la colonna `seed`.
+OUT_NAME    = "BI_mc_error_m205.csv" if N_SEEDS == 1 else f"BI_mc_error_m205_seeds{N_SEEDS}.csv"
+FOLDERS     = [folder_info(n) for n in [RESULTS_NAME] + list(COMPARE)]
+# la NPS GENERA gli eventi: con NPS diverse le cartelle non vedrebbero gli stessi eventi
+if len({f["nps"] for f in FOLDERS}) > 1:
+    raise SystemExit("[ERROR] COMPARE: le cartelle usano NPS diverse, gli eventi non sarebbero gli stessi")
+NPS_SOURCE  = FOLDERS[0]["nps"]
+RESULTS_DIR = FOLDERS[0]["dir"]             # log, job e copia congelata
 ACCEPTANCE  = 0.9
 T_MAX       = 8e-4          # ritardo massimo del pile-up [s] (= T_MAX del BI analitico)
 DETECTOR_SIGMA = 0.0        # spread di ampiezza AGGIUNTIVO al rumore. 0.0 = solo rumore, che e'
@@ -189,7 +214,7 @@ PLOT = [(91, 15)]           # coppie (canale, WP) per cui disegnare le distribuz
 SUBMIT_MODE       = "qsub"    # "qsub" = un job per coppia ; "local" = in sequenza (debug)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # con CHUNK=1000 il picco misurato e' ~1.5 GB
+RAM_GB            = 4         # picco misurato: CHUNK=2000 ~2 GB, 4000 3.6 GB; a 500 molto meno
 MAX_PARALLEL_JOBS = 150
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "MC"      # nome job / throttling via qstat
@@ -203,7 +228,7 @@ ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
 LOG_DIR           = os.path.join(RESULTS_DIR, "logs_mc")
 JOBS_DIR          = os.path.join(RESULTS_DIR, "jobs_mc")
 
-CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "train", "nps", "filter",
+CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "seed", "train", "nps", "filter",
                   "BI_analytic", "BI_mc", "sigma_BI", "rp", "sigma_rp", "nsim", "ratio"]
 
 
@@ -230,13 +255,13 @@ def root_file(channel):
     return files[0]
 
 
-def template_pulse(channel, wp, source):
+def template_pulse(channel, wp, source, sim_from=None):
     """Template peak-normalizzato secondo `source`: "root" (medianAP di Octopus), "fit"
-    (bestfit dello scan) o "sim" (AP simulato prodotto da --make-ap)."""
+    (bestfit dello scan) o "sim" (AP simulato `sim_from`, es. "APsimfit10000led")."""
     if source == "fit":
         path = os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
     elif source == "sim":
-        path = os.path.join(SIM_AP_DIR, SIM_AP_PATTERN.format(ch=channel, wp=wp, gen=SIM_AP_FROM))
+        path = os.path.join(SIM_AP_DIR, SIM_AP_PATTERN.format(ch=channel, wp=wp, gen=sim_from))
     else:
         with uproot.open(root_file(channel)) as f:
             v = np.asarray(f[f"averagepulse_ap_wp{wp}_medianAP"].values(), dtype=float)
@@ -279,83 +304,98 @@ def load_row_inputs(channel, wp):
     return template_pulse(channel, wp, GEN_TEMPLATE), load_noise(channel, wp)
 
 
-def simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, dt_max, seed):
-    """PSD (parametro di forma) di NSIM eventi simulati: dt_max=0 -> impulsi SINGOLI,
-    dt_max>0 -> PILE-UP. Il rumore e' generato con lo spettro nps del canale.
+def simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed):
+    """PSD (parametro di forma) di NSIM eventi simulati, una lista per filtro di `filters`
+    ((kernel, f1, f2), uno per cartella): gli STESSI eventi passano per tutti i filtri.
+    dt_max=0 -> impulsi SINGOLI, dt_max>0 -> PILE-UP. Il rumore ha lo spettro nps del canale.
 
     Si genera a BLOCCHI di CHUNK eventi: il generatore alloca sei array (n, 10000) complessi,
-    quindi a NSIM intero il processo viene ucciso per memoria. Il seed di ogni blocco e'
-    seed + indice del blocco, cosi' con PAIRED_NOISE singoli e pile-up restano appaiati blocco
-    per blocco (stesso rumore, stessa ampiezza, stesso rapporto r)."""
-    out = []
-    done = 0
+    quindi a NSIM intero il processo viene ucciso per memoria. UN solo generatore per tutta la
+    simulazione, passato a ogni blocco: il flusso continua da un blocco all'altro senza ripetere
+    numeri, quindi `seed` identifica l'intera simulazione. Con PAIRED_NOISE singoli e pile-up
+    hanno due generatori con lo stesso seed, che estraggono in parallelo: stesso rumore, stessa
+    ampiezza, stesso rapporto r (uniform(0, 0, n) consuma n numeri come uniform(0, T_MAX, n)).
+    NB: gli eventi dipendono comunque da CHUNK, perche' dentro un blocco le estrazioni vanno per
+    tipo (tutto il rumore reale del blocco, poi l'immaginario, ampiezze, r, dt)."""
+    rng = np.random.default_rng(seed)      # seed intero, o [seed, 1] per il pile-up non appaiato
+    out = [[] for _ in filters]
     for k in range(0, NSIM, CHUNK):
         n = min(CHUNK, NSIM - k)
         fpulses, *_ = sim.simulate_frequency_pulses(S, nps, DETECTOR_SIGMA, w, nsim=n,
-                                                    seed=seed + k // CHUNK,
+                                                    seed=rng,   # default_rng(rng) e' rng stesso
                                                     signal_scale=signal_amp, dt_max=dt_max,
                                                     fold_ratio=FOLD_RATIO)
         pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
         del fpulses
         dataset = ds.NumpyDataset(pulses)
         dataset.win_length = pulses.shape[1]    # get_PSD_interpole legge win_length dal dataset
-        psd, _, _ = an.get_PSD_interpole(dataset, H_unit, f1, f2)
-        out.append(np.asarray(psd).ravel())
+        # get_PSD_interpole lavora sulla copia impilata dal DataLoader: pulses resta intatto per
+        # il filtro successivo (verificato da test/check_compare_mode_m205.py)
+        for o, (H, f1, f2) in zip(out, filters):
+            o.append(np.asarray(an.get_PSD_interpole(dataset, H, f1, f2)[0]).ravel())
         del pulses, dataset
-        done += n
-    return np.concatenate(out)
+    return [np.concatenate(o) for o in out]
 
 
-def train_kernel(channel, wp, nps, row):
-    """Kernel del TRAINING, ricalcolato da TRAIN_TEMPLATE secondo FILTER_TYPE:
+def train_kernel(f, channel, wp, nps, row):
+    """Kernel del TRAINING della cartella `f`, ricalcolato dal suo template secondo il suo filtro:
     H = S*/NPS ("optimum"), W = S*/(|S|^2+lambda*NPS) ("wiener"), R(f)*W ("wiener_R")."""
-    tpl = template_pulse(channel, wp, TRAIN_TEMPLATE)
+    tpl = template_pulse(channel, wp, f["train"], f["sim"])
     S, _, H = an.compute_H(tpl, nps, np.hanning, sampling_rate=SAMPLING_RATE)
-    if FILTER_TYPE == "optimum":
+    if f["filter"] == "optimum":
         return H
     S_t = torch.as_tensor(S, dtype=torch.cfloat)
     n_t = torch.as_tensor(nps, dtype=torch.float32)
     W = an.compute_W_torch(S_t, n_t, torch.tensor(float(row["lambda_wiener"])))
-    if FILTER_TYPE == "wiener_R":
+    if f["filter"] == "wiener_R":
         W = an.reliability_R(S_t, n_t, int(float(row["n_events"])), float(row["beta_R"])) * W
     return W.detach().cpu().numpy()
 
 
-def run_pair(channel, wp, row):
-    """BI Monte Carlo + incertezza per una coppia (canale, WP)."""
-    signal_amp = float(row["signal_amp"])
-    meanpulse, nps = load_row_inputs(channel, wp)
-    S, w, H_unit = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
-
-    # Il KERNEL applicato ai dati e' quello del TRAINING, che puo' venire da un template diverso
-    # da quello di generazione: si ricalcola da TRAIN_TEMPLATE e si verifica contro il .npy salvato.
-    H_train = train_kernel(channel, wp, nps, row)
-    kern = os.path.join(FILTERS_DIR, f"kernel_ch{channel}_wp{wp}.npy")
+def load_filters(f, channel, wp, nps, row):
+    """(kernel, f1, f2) della cartella `f`. Il KERNEL applicato ai dati e' quello del TRAINING,
+    che puo' venire da un template diverso da quello di generazione: si ricalcola e si verifica
+    contro il .npy salvato."""
+    H = train_kernel(f, channel, wp, nps, row)
+    kern = os.path.join(f["filters_dir"], f"kernel_ch{channel}_wp{wp}.npy")
     if os.path.exists(kern):
         saved = full_spectrum(np.load(kern))
-        rel = np.abs(saved - H_train).max() / max(np.abs(H_train).max(), 1e-300)
+        rel = np.abs(saved - H).max() / max(np.abs(H).max(), 1e-300)
         if rel > 1e-5:
-            raise RuntimeError(f"il kernel salvato non corrisponde a TRAIN_TEMPLATE='{TRAIN_TEMPLATE}',"
-                               f" FILTER_TYPE='{FILTER_TYPE}', NPS_SOURCE='{NPS_SOURCE}' "
-                               f"(scarto relativo {rel:.1e}): controlla RESULTS_DIR")
-    H_unit = H_train                       # i filtri vanno applicati col LORO kernel
-
-    f1 = full_spectrum(np.load(os.path.join(FILTERS_DIR, f"f1_ch{channel}_wp{wp}.npy")))
-    f2 = full_spectrum(np.load(os.path.join(FILTERS_DIR, f"f2_ch{channel}_wp{wp}.npy")))
-
-    psd_single = simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, 0.0, SEED)
-    psd_pileup = simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, T_MAX,
-                              SEED if PAIRED_NOISE else SEED + 1)
-
-    cut = np.percentile(psd_single, 100 - ACCEPTANCE * 100)
-    rp = float(np.mean(psd_pileup < cut))              # frazione di pile-up RIGETTATA
-    bi_mc = fn.K * (1.0 - rp)
-    sigma_rp, sigma_bi = an.compute_BI_uncertainty(psd_single, psd_pileup, ACCEPTANCE, rp)
-    return dict(rp=rp, sigma_rp=sigma_rp, BI_mc=bi_mc, sigma_BI=sigma_bi,
-                cut=cut, psd_single=psd_single, psd_pileup=psd_pileup)
+            raise RuntimeError(f"{f['name']}: il kernel salvato non corrisponde a train="
+                               f"'{f['train']}', filtro '{f['filter']}', NPS '{f['nps']}' "
+                               f"(scarto relativo {rel:.1e})")
+    f1, f2 = (full_spectrum(np.load(os.path.join(f["filters_dir"], f"{k}_ch{channel}_wp{wp}.npy")))
+              for k in ("f1", "f2"))
+    return H, f1, f2
 
 
-def plot_pair(channel, wp, res, bi_analytic):
+def run_pair(channel, wp, rows, seed=SEED):
+    """BI Monte Carlo + incertezza per una coppia (canale, WP), eventi generati da `seed`, per
+    ogni cartella di FOLDERS (`rows`: la sua riga del CSV dei risultati, stesso ordine).
+    Gli eventi si generano UNA volta e passano per i filtri di tutte le cartelle."""
+    amps = {float(r["signal_amp"]) for r in rows}
+    if len(amps) > 1:
+        raise RuntimeError(f"signal_amp diverso fra le cartelle {amps}: eventi non confrontabili")
+    signal_amp = amps.pop()
+    meanpulse, nps = load_row_inputs(channel, wp)
+    S, w, _ = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
+    filters = [load_filters(f, channel, wp, nps, r) for f, r in zip(FOLDERS, rows)]
+
+    singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed)
+    pileups = simulate_psd(S, nps, w, filters, signal_amp, T_MAX,
+                           seed if PAIRED_NOISE else [seed, 1])
+    out = []
+    for psd_single, psd_pileup in zip(singles, pileups):
+        cut = np.percentile(psd_single, 100 - ACCEPTANCE * 100)
+        rp = float(np.mean(psd_pileup < cut))              # frazione di pile-up RIGETTATA
+        sigma_rp, sigma_bi = an.compute_BI_uncertainty(psd_single, psd_pileup, ACCEPTANCE, rp)
+        out.append(dict(rp=rp, sigma_rp=sigma_rp, BI_mc=fn.K * (1.0 - rp), sigma_BI=sigma_bi,
+                        cut=cut, psd_single=psd_single, psd_pileup=psd_pileup))
+    return out
+
+
+def plot_pair(folder_dir, channel, wp, res, bi_analytic):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -374,7 +414,7 @@ def plot_pair(channel, wp, res, bi_analytic):
     ax.legend()
     ax.grid(True, ls="--", alpha=0.4)
     fig.tight_layout()
-    out = os.path.join(RESULTS_DIR, f"BI_mc_psd_ch{channel}_wp{wp}.png")
+    out = os.path.join(folder_dir, f"BI_mc_psd_ch{channel}_wp{wp}.png")
     fig.savefig(out, dpi=130)
     plt.close(fig)
     print(f"   distribuzioni -> {out}")
@@ -423,13 +463,14 @@ def make_sim_ap(rows, gen):
             print(f"{ch:>4d} {wp:>3d}   {tag} {e}")
 
 
-ROW_KEY = ("channel", "wp", "gen")
+ROW_KEY = ("channel", "wp", "gen", "seed")
 
 
 def row_key(r):
-    """Identita' di una riga: il PUNTO e la CAMPAGNA. Due run che differiscono per il
-    template iniettato sono righe diverse, non la stessa riga riscritta."""
-    return tuple(str(r.get(k, "") or "") for k in ROW_KEY)
+    """Identita' di una riga: il PUNTO, la CAMPAGNA e il SEED. Due run che differiscono per il
+    template iniettato o per il seed sono righe diverse, non la stessa riga riscritta.
+    Una riga senza seed (CSV di prima di N_SEEDS) e' la run fatta con SEED."""
+    return tuple(str(r.get(k) or (SEED if k == "seed" else "")) for k in ROW_KEY)
 
 
 def read_rows(path):
@@ -564,37 +605,44 @@ def submit_task(task_key, sh_file):
 # Worker: UNA coppia (canale, WP)
 # ═════════════════════════════════════════════════════════════════════════════
 def run_worker(channel, wp):
-    rows = [r for r in csv.DictReader(open(BI_CSV))
-            if int(r["channel"]) == channel and int(r["wp"]) == wp]
-    if not rows:
-        print(f"[ERROR] ch {channel} wp {wp}: riga non trovata in {BI_CSV}")
-        return
-    r = rows[0]
-    bi_an = float(r["BI"])
-    try:
-        res = run_pair(channel, wp, r)
-    except Exception as e:
-        print(f"[ERROR] ch {channel} wp {wp}: {e}")
-        return
-    append_row_to_csv(OUT_CSV, dict(
-        channel=channel, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE, train=TRAIN_TEMPLATE,
-        nps=NPS_SOURCE, filter=FILTER_TYPE, BI_analytic=bi_an, BI_mc=res["BI_mc"],
-        sigma_BI=res["sigma_BI"], rp=res["rp"], sigma_rp=res["sigma_rp"], nsim=NSIM,
-        ratio=res["BI_mc"] / bi_an))
-    if (channel, wp) in PLOT:
-        plot_pair(channel, wp, res, bi_an)
-    print(f"[OK] ch {channel} wp {wp}: BI_mc={res['BI_mc']:.4e} +- {res['sigma_BI']:.1e} "
-          f"(analitico {bi_an:.4e}, rapporto {res['BI_mc']/bi_an:.3f})  ->  {OUT_CSV}")
+    rows = []                              # la riga del punto nel CSV dei risultati di ogni cartella
+    for f in FOLDERS:
+        r = [x for x in csv.DictReader(open(f["bi_csv"]))
+             if int(x["channel"]) == channel and int(x["wp"]) == wp]
+        if not r:
+            print(f"[ERROR] ch {channel} wp {wp}: riga non trovata in {f['bi_csv']}")
+            return
+        rows.append(r[0])
+    for i in range(N_SEEDS):
+        seed = SEED + i
+        try:
+            results = run_pair(channel, wp, rows, seed)
+        except Exception as e:
+            print(f"[ERROR] ch {channel} wp {wp} seed {seed}: {e}")
+            return
+        for f, r, res in zip(FOLDERS, rows, results):
+            bi_an = float(r["BI"])
+            append_row_to_csv(f["out_csv"], dict(
+                channel=channel, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE, seed=seed,
+                train=f["train"], nps=f["nps"], filter=f["filter"], BI_analytic=bi_an,
+                BI_mc=res["BI_mc"], sigma_BI=res["sigma_BI"], rp=res["rp"],
+                sigma_rp=res["sigma_rp"], nsim=NSIM, ratio=res["BI_mc"] / bi_an))
+            if i == 0 and (channel, wp) in PLOT:
+                plot_pair(f["dir"], channel, wp, res, bi_an)
+            print(f"[OK] {f['name']} ch {channel} wp {wp} seed {seed}: BI_mc={res['BI_mc']:.4e} "
+                  f"+- {res['sigma_BI']:.1e} (analitico {bi_an:.4e}, rapporto "
+                  f"{res['BI_mc']/bi_an:.3f})")
 
 
 def select_rows():
-    rows = list(csv.DictReader(open(BI_CSV)))
+    bi_csv = FOLDERS[0]["bi_csv"]          # i punti li decide RESULTS_NAME
+    rows = list(csv.DictReader(open(bi_csv)))
     if ONLY_CHANNELS:
         rows = [r for r in rows if int(r["channel"]) in ONLY_CHANNELS]
     if ONLY_WPS:
         rows = [r for r in rows if int(r["wp"]) in ONLY_WPS]
     if not rows:
-        raise SystemExit(f"[ERROR] nessuna riga selezionata in {BI_CSV}")
+        raise SystemExit(f"[ERROR] nessuna riga selezionata in {bi_csv}")
     return sorted(rows, key=lambda x: (int(x["channel"]), int(x["wp"])))
 
 
@@ -623,15 +671,21 @@ def main():
             make_sim_ap(rows, gen)
         return
 
-    print(f"Set: {RESULTS_NAME}")
-    print(f"  dedotto dal nome -> filtro '{FILTER_TYPE}', training su '{TRAIN_TEMPLATE}'"
-          + (f" ({SIM_AP_FROM})" if SIM_AP_FROM else "") + f", NPS '{NPS_SOURCE}'")
-    print(f"  eventi generati da '{GEN_TEMPLATE}'"
-          + ("  [auto-consistente: e' anche il template del training]"
-             if GEN_TEMPLATE == TRAIN_TEMPLATE else "  [incrociato]"))
+    for f in FOLDERS:
+        print(f"Set: {f['name']}")
+        print(f"  dedotto dal nome -> filtro '{f['filter']}', training su '{f['train']}'"
+              + (f" ({f['sim']})" if f["sim"] else "") + f", NPS '{f['nps']}'"
+              + ("  [auto-consistente]" if GEN_TEMPLATE == f["train"] else "  [incrociato]"))
+    if len(FOLDERS) > 1:
+        print(f"  MODALITA' CONFRONTO: {len(FOLDERS)} cartelle, eventi generati UNA volta per seed "
+              f"e passati per i filtri di tutte")
+    print(f"  eventi generati da '{GEN_TEMPLATE}'")
     print(f"  righe nel CSV: {'sovrascritte' if OVERWRITE else 'accodate'} "
-          f"(chiave: canale, WP, gen)")
-    print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, chunk={CHUNK}, "
+          f"(chiave: canale, WP, gen, seed)")
+    print(f"  seed: {SEED}..{SEED + N_SEEDS - 1}, uno per simulazione da {NSIM} eventi (stessi "
+          f"per ogni cartella, con lo stesso CHUNK: e' questo che rende confrontabili filtri diversi)")
+    print(f"  {len(rows)} coppie (canale, WP) x {N_SEEDS} seed, "
+          f"NSIM={NSIM}, chunk={CHUNK}, "
           f"paired_noise={PAIRED_NOISE}, fold_ratio={FOLD_RATIO}, "
           f"detector_sigma={DETECTOR_SIGMA}\n")
 
@@ -641,7 +695,7 @@ def main():
         print("[INFO] SUBMIT_MODE='local': eseguo i task in sequenza (no qsub).\n")
         for ch, wp in tasks:
             run_worker(ch, wp)
-        print(f"\nFatto. Risultati in {OUT_CSV}")
+        print(f"\nFatto. Risultati in {', '.join(f['out_csv'] for f in FOLDERS)}")
         return
 
     # Le cartelle devono esistere PRIMA del qsub: PBS scrive stdout/stderr in LOG_DIR e se
@@ -672,7 +726,8 @@ def main():
     print(f"  {submitted}/{len(tasks)} job sottomessi.")
     if failed:
         print(f"  {len(failed)} NON sottomessi: {failed}")
-    print(f"  Ogni job scrivera' la sua riga in: {OUT_CSV}")
+    for f in FOLDERS:
+        print(f"  Ogni job scrivera' le sue righe in: {f['out_csv']}")
     print(f"  Log dei job in: {LOG_DIR}")
     print("=" * 65 + "\n")
 

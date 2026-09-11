@@ -44,8 +44,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # (injection)" del paper). Senza "@" si usa MC_GEN.
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
-SETS = ["m205_results_octopus_APsimfit10000_npsclean",
-        "m205_results_wiener_APsimfit10000_npsclean_swna1"]
+SETS = ["m205_results_octopus_APsimfit10000led_npsclean",
+        "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
+
+#SETS = ["m205_results_octopus_npsclean@fit",
+#        "m205_results_octopus_fit_npsclean@fit"]
 
 # Coppie per i pannelli di differenza (z e Delta BI).
 #   None                          -> ogni set contro il PRIMO della lista
@@ -55,7 +58,7 @@ SETS = ["m205_results_octopus_APsimfit10000_npsclean",
 #                                    sbaglia. Si disegna tratteggiata, per distinguerla dai
 #                                    confronti fra set.
 # Le due forme si possono mescolare nella stessa lista, per esempio:
-PAIRS = [("OF-APsimfit10000:mc", "Wwna-APsimfit10000:mc")]
+PAIRS = None
 #            ("Wwna-root:analytic", "Wwna-root:mc")]
 # Il default (None) mette solo i confronti fra set: le coppie mc-vs-analytic si aggiungono
 # a mano, altrimenti i due pannelli diventano illeggibili con piu' di due set.
@@ -68,6 +71,10 @@ PAIRS = [("OF-APsimfit10000:mc", "Wwna-APsimfit10000:mc")]
 #   "both"     -> tutti e due: MARKER = Monte Carlo, LINEA = analitico, stesso colore per set.
 #                 E' il modo per vedere a colpo d'occhio dove i due divergono, cioe' dove il
 #                 modello sta mentendo. I due pannelli di sotto (z e Delta BI) restano sul MC.
+SLIDE = True             # True  -> figura PER SLIDE: un pannello BI grande + un pannello Delta BI,
+                         #          font e marker grandi, niente z ne' note fitte (plot_bi_slide);
+                         #          la griglia dei filtri non viene disegnata (non e' roba da slide).
+                         # False -> figura da DOCUMENTO: 3 pannelli (BI, z, Delta BI) fitti (plot_bi).
 ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] = tutti quelli
                          # presenti nei CSV dei set
 
@@ -77,10 +84,17 @@ ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] =
 # Non confondere MC_GEN con il template del TRAINING, che sta nel nome della cartella: qui si
 # sceglie cosa e' stato INIETTATO, la' cosa e' stato usato per addestrare.
 MC_GEN = "fit"           # "root" | "fit"
-MC_CSV = "BI_mc_error_m205.csv"
+# File del Monte Carlo: quello a seed singolo, oppure quello a piu' seed scritto da
+# simulate_BI_error con N_SEEDS > 1 (serve per l'errore APPAIATO su Delta BI, vedi paired).
+MC_CSV = "BI_mc_error_m205_seeds50.csv"     # | "BI_mc_error_m205.csv" (un seed)
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
+# Target CUPID sul pile-up: meta' del budget totale di 1e-4 counts/(keV kg yr).
+# Disegnato in tutti i pannelli che mostrano il BI. None per non disegnarlo.
+BI_TARGET = 5e-5
 GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
-COLORS = {}              # override manuale {tag: colore}; default = ciclo C0, C1, ...
+COLORS = {"m205_results_octopus_APsimfit10000led_npsclean": "C0",
+        "m205_results_wiener_APsimfit10000led_npsclean": "C1",
+        "m205_results_wiener_APsimfit10000led_npsclean_swna1": "C2"}              # override manuale {tag: colore}; default = ciclo C0, C1, ...
 SAMPLING_RATE = 10_000
 WINDOW        = 10_000
 
@@ -191,7 +205,7 @@ def load_set(folder, gen):
         k = (int(r["channel"]), int(r["wp"]))
         out[k] = dict(vbias=float(r["vbias"]), BI=float(r["BI"]),
                       sigma_analytic=float(r["sigma_analytic"]), SNR=float(r["SNR"]),
-                      BI_mc=np.nan, sigma_BI=np.nan, gen="", nsim=np.nan, dir=d)
+                      BI_mc=np.nan, sigma_BI=np.nan, gen="", nsim=np.nan, seeds={}, dir=d)
     mc = os.path.join(d, MC_CSV)
     n_mc = 0
     if os.path.exists(mc):
@@ -200,16 +214,54 @@ def load_set(folder, gen):
                 continue
             k = (int(r["channel"]), int(r["wp"]))
             if k in out:
-                out[k]["BI_mc"] = float(r["BI_mc"])
-                out[k]["sigma_BI"] = float(r["sigma_BI"])
-                # il template INIETTATO e la statistica del MC stanno solo qui: servono al
-                # titolo e alla nota sul pannello delle differenze
+                # una riga per seed (N_SEEDS di simulate_BI_error); CSV senza la colonna = una
+                # sola run, fatta con il seed di default 1234
+                out[k]["seeds"][int(r.get("seed") or 1234)] = (
+                    float(r["BI_mc"]), float(r["sigma_BI"]), float(r.get("nsim") or np.nan))
+                # il template INIETTATO sta solo qui: serve al titolo
                 out[k]["gen"] = r.get("gen", "")
-                out[k]["nsim"] = float(r.get("nsim") or np.nan)
                 n_mc += 1
-    if os.path.exists(mc) and n_mc == 0:
+    if not os.path.exists(mc):
+        print(f"[INFO] {folder}: manca {MC_CSV} (MC_CSV): niente Monte Carlo per questo set")
+    elif n_mc == 0:
         print(f"[INFO] {folder}: il CSV del Monte Carlo non ha righe con gen='{gen}'")
-    return out
+    return out      # BI_mc/sigma_BI li riempie align_seeds, dopo aver letto TUTTI i set
+
+
+def med_err(x):
+    """(mediana, errore della mediana) di campioni indipendenti, dalla dispersione MISURATA.
+    sqrt(pi/2)*std/sqrt(n) vale per campioni gaussiani: e' il caso, ogni seed e' una
+    binomiale con N = NSIM grande. Rispetto alla media la barra e' ~25% piu' larga; in cambio
+    un seed anomalo non sposta il valore."""
+    x = np.asarray(x, dtype=float)
+    return float(np.median(x)), float(np.sqrt(np.pi / 2) * x.std(ddof=1) / np.sqrt(len(x)))
+
+
+def align_seeds(data, keys):
+    """Riduce ogni punto (canale, WP) ai seed COMUNI a tutti i set che hanno il MC, poi:
+    BI_mc = MEDIANA sui seed, sigma_BI = errore della mediana dalla dispersione misurata sui
+    seed (med_err), nsim = totale. Con un seed solo resta il sigma della formula
+    (compute_BI_uncertainty), l'unico disponibile.
+
+    Cosi' filtri diversi sono confrontati SEMPRE sugli stessi N seed, cioe' sugli stessi
+    eventi: un set con un seed in piu' (un job interrotto a meta', la vecchia run singola)
+    non sposta la media di uno solo dei due."""
+    dropped = 0
+    for k in {k for lab in keys for k in data[lab]}:
+        recs = [data[lab][k] for lab in keys if data[lab].get(k, {}).get("seeds")]
+        if not recs:
+            continue
+        common = sorted(set.intersection(*(set(r["seeds"]) for r in recs)))
+        for rec in recs:
+            dropped += len(rec["seeds"]) - len(common)
+            rec["seeds"] = {s: rec["seeds"][s] for s in common}
+            if common:
+                bi, sg, ns = np.array(list(rec["seeds"].values())).T
+                m, e = med_err(bi) if len(bi) > 1 else (bi[0], sg[0])
+                rec.update(BI_mc=m, sigma_BI=e, nsim=ns.sum())
+    n = sorted({len(r["seeds"]) for lab in keys for r in data[lab].values() if r["seeds"]})
+    print(f"[INFO] seed comuni a tutti i set, per punto: {n or 'nessuno'}"
+          + (f"  (scartate {dropped} righe MC non comuni)" if dropped else ""))
 
 
 def mc_info(data, keys, channel):
@@ -269,11 +321,16 @@ def significance(rec_ref, rec, spec_ref, spec):
 
     NB: sigma_BI e' l'errore STATISTICO del Monte Carlo e scala come 1/sqrt(NSIM), quindi
     alzando NSIM qualunque differenza diventa "significativa". Fra set diversi gli eventi
-    sono gli STESSI (stesso seed), i BI sono correlati e lo z e' conservativo."""
+    sono gli STESSI (stesso seed): con piu' seed in comune z usa l'errore APPAIATO (paired),
+    che contiene la covarianza; con un seed solo resta la quadratura, conservativa."""
     ta, sa = series(spec_ref)
     tb, sb = series(spec)
     if ta != tb and not (sa == "mc" and sb == "mc"):
         return None
+    d = paired(rec_ref, rec, spec_ref, spec)
+    if d is not None:
+        m, err = med_err(d)
+        return None if err == 0 else m / err
     a, b = bi_of(rec_ref, sa), bi_of(rec, sb)
     if a is None or b is None:
         return None
@@ -281,17 +338,61 @@ def significance(rec_ref, rec, spec_ref, spec):
     return None if den == 0 else (b[0] - a[0]) / den
 
 
+def paired(rec_ref, rec, spec_ref, spec):
+    """Delta BI [%] SEED PER SEED fra due set diversi, entrambi simulati, sui seed comuni.
+
+    Stesso seed = stessi eventi, quindi ogni Delta_s ha gia' dentro la covarianza fra i due BI
+    (misurata rho ~ +0.998): la dispersione dei Delta_s sui seed e' l'errore vero di Delta BI,
+    senza dover stimare rho. None se non si applica o se i seed comuni sono meno di 2."""
+    (ta, sa), (tb, sb) = series(spec_ref), series(spec)
+    if ta == tb or sa != "mc" or sb != "mc":
+        return None
+    common = sorted(rec_ref["seeds"].keys() & rec["seeds"].keys())
+    if len(common) < 2:
+        return None
+    return np.array([100.0 * (rec["seeds"][s][0] / rec_ref["seeds"][s][0] - 1) for s in common])
+
+
 def delta_pct(rec_ref, rec, spec_ref, spec):
     """100*(BI - BI_ref)/BI_ref. Fra set diversi le due sorgenti devono coincidere: analitico
-    con analitico, simulato con simulato. Sullo stesso set possono differire, ed e' il punto."""
+    con analitico, simulato con simulato. Sullo stesso set possono differire, ed e' il punto.
+    Con piu' seed in comune: MEDIANA dei Delta seed per seed (vedi paired)."""
     ta, sa = series(spec_ref)
     tb, sb = series(spec)
     if ta != tb and sa != sb:
         return None
+    d = paired(rec_ref, rec, spec_ref, spec)
+    if d is not None:
+        return med_err(d)[0]
     a, b = bi_of(rec_ref, sa), bi_of(rec, sb)
     if a is None or b is None or not a[0]:
         return None
     return 100.0 * (b[0] - a[0]) / a[0]
+
+
+def delta_err(rec_ref, rec, spec_ref, spec):
+    """Errore su Delta BI [%], o None se non calcolabile.
+
+    Con R = B/A e Delta = 100*(R-1), la propagazione da' la quadratura degli errori
+    RELATIVI (non degli assoluti):
+        sigma_Delta = 100 * R * sqrt( (sigma_B/B)^2 + (sigma_A/A)^2 )
+    che trascura la covarianza: i due set girano sugli STESSI eventi (stesso seed), quindi i
+    BI sono correlati positivamente e la barra e' CONSERVATIVA. Se i due set hanno piu' seed
+    in comune (N_SEEDS di simulate_BI_error) si usa invece l'errore della MEDIANA dei Delta
+    seed per seed (med_err), che la covarianza la contiene (vedi paired).
+    Sul BI analitico sigma = 0, quindi una coppia analitico-vs-analitico non ha barra: e'
+    corretto, non e' un dato mancante."""
+    ta, sa = series(spec_ref)
+    tb, sb = series(spec)
+    if ta != tb and sa != sb:
+        return None
+    d = paired(rec_ref, rec, spec_ref, spec)
+    if d is not None:
+        return med_err(d)[1]
+    a, b = bi_of(rec_ref, sa), bi_of(rec, sb)
+    if a is None or b is None or not a[0] or not b[0]:
+        return None
+    return 100.0 * (b[0] / a[0]) * float(np.hypot(b[1] / b[0], a[1] / a[0]))
 
 
 def pair_label(spec_ref, spec):
@@ -351,6 +452,9 @@ def plot_bi(data, channel, keys):
                        label=LABELS[lab] + ("  [analytic only]" if lab in no_mc else "")
                        if (BI_SOURCE == "analytic" or lab in no_mc) else None)
     ax[0].set_ylabel("BI  [counts/keV/kg/yr]")
+    if BI_TARGET:
+        ax[0].axhline(BI_TARGET, color="tab:red", ls="--", lw=1.6, zorder=1,
+                      label="CUPID pile-up target")
 
     n_mc = sum(1 for lab in keys
                if any(bi_mc(rec) is not None for (c, _), rec in data[lab].items() if c == channel))
@@ -485,6 +589,149 @@ def plot_bi(data, channel, keys):
     return out
 
 
+def set_bias_axis(ax):
+    """Asse del bias in scala LOG, con etichette in volt e non in potenze di 10.
+
+    I 15 working point sono 0.6 ... 40 V ma non sono equispaziati: su scala lineare 11 punti
+    su 15 finiscono nel primo quarto della larghezza -- cioe' tutta la struttura sta schiacciata
+    a sinistra e la zona di plateau, dove non succede niente, si prende tre quarti della tela.
+    In log lo stesso intervallo 0.6-10 V occupa due terzi. (Per tornare lineare: togliere la
+    chiamata a questa funzione.)"""
+    ax.set_xscale("log")
+    ticks = [0.6, 1, 2, 5, 10, 20, 40]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t:g}" for t in ticks])
+    ax.xaxis.set_minor_formatter(plt.NullFormatter())
+
+
+def ch_style(ch, chans):
+    """(colore, marker) di un CANALE. Nelle figure d'insieme la curva e' il canale, non il
+    set: serve una scala di colori diversa da color(), che indicizza i set."""
+    i = sorted(chans).index(ch)
+    return f"C{i % 10}", "os^Dv<>"[i % 7]
+
+
+# Marker: grande abbastanza da vedersi da lontano su una slide, ma con cappucci e spessore
+# della barra cresciuti insieme, altrimenti a 9 punti il marker si mangia le barre d'errore.
+SLIDE_MS = 9
+SLIDE_CAP, SLIDE_ELW = 5, 1.7
+# Colore della curva nel pannello DIFFERENZA: la' non si disegna ne' un set ne' l'altro ma il
+# loro scarto, quindi un colore proprio invece di quello del secondo set.
+DELTA_COLOR = "#0d2c6b"      # blu scuro: distinto dal "tab:blue" del filtro ottimo nel pannello sopra
+
+# Stile per le figure da slide: font e tratti grandi, niente cornice a destra/sopra, griglia
+# tenue. Applicato solo via rc_context, quindi non tocca le figure da documento.
+SLIDE_RC = {
+    "font.size": 17, "axes.titlesize": 21, "axes.labelsize": 18,
+    "xtick.labelsize": 15, "ytick.labelsize": 15, "legend.fontsize": 15,
+    "axes.linewidth": 1.3, "lines.linewidth": 2.6, "lines.markersize": SLIDE_MS,
+    "axes.spines.top": False, "axes.spines.right": False,
+    "axes.grid": True, "grid.linestyle": ":", "grid.alpha": 0.5,
+    "figure.dpi": 150,
+}
+
+
+def plot_bi_slide(data, channel, keys):
+    """Figura di confronto pensata per una slide: grande, leggibile, un messaggio.
+
+    Riusa gli stessi accessori della versione da documento (bi_mc, delta_pct, color, ...),
+    ma disegna solo BI vs bias (sopra) e Delta BI (sotto): niente pannello z, niente note
+    fitte dentro gli assi -- su una slide non si leggono e la formula sta nella didascalia."""
+    with plt.rc_context(SLIDE_RC):
+        # Delta BI in basso solo se c'e' almeno una coppia disegnabile su questo canale.
+        pairs = [(a, b) for a, b in PAIRS
+                 if series(a)[0] in keys and series(b)[0] in keys]
+        has_delta = any(
+            delta_pct(data[series(a)[0]][k], data[series(b)[0]][k], a, b) is not None
+            for a, b in pairs
+            for k in data[series(a)[0]] if k[0] == channel and k in data[series(b)[0]])
+        if has_delta:
+            fig, (ax, axd) = plt.subplots(2, 1, figsize=(11, 9), sharex=True,
+                                          gridspec_kw={"height_ratios": [2.5, 1]})
+        else:
+            fig, ax = plt.subplots(figsize=(11, 6.8)); axd = None
+
+        no_mc = []
+        for lab in keys:
+            vm, bm, em, va, ba = [], [], [], [], []
+            for (c, wp), rec in sorted(data[lab].items()):
+                if c != channel:
+                    continue
+                va.append(rec["vbias"]); ba.append(rec["BI"])
+                m = bi_mc(rec)
+                if m is not None:
+                    vm.append(rec["vbias"]); bm.append(m[0]); em.append(m[1])
+            if not va:
+                continue
+            if BI_SOURCE != "analytic" and vm:
+                ax.errorbar(vm, bm, yerr=em, fmt=marker(lab), ms=SLIDE_MS, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW,
+                            mfc=color(lab), mec="white", mew=1.2, ls="none",
+                            color=color(lab), label=LABELS[lab], zorder=3)
+            elif BI_SOURCE != "analytic":
+                no_mc.append(lab)
+            if BI_SOURCE != "mc":
+                ax.plot(va, ba, "-", lw=2.4, alpha=0.85, color=color(lab), zorder=2,
+                        label=LABELS[lab] if (BI_SOURCE == "analytic" or lab in no_mc) else None)
+
+        n_mc = sum(1 for lab in keys if any(
+            bi_mc(rec) is not None for (c, _), rec in data[lab].items() if c == channel))
+        gen, nsim = mc_info(data, keys, channel)
+        ax.set_ylabel("BI  [counts / keV / kg / yr]")
+        if BI_TARGET:
+            ax.axhline(BI_TARGET, color="tab:red", ls="--", lw=2.2, zorder=1,
+                       label="CUPID pile-up target")
+        ax.set_title(f"Ch {channel} — background index vs bias voltage")
+        # Notazione scientifica SEMPRE (scilimits=(0,0)), con il fattore comune in alto: su una
+        # slide "0.8  x10^-4" si legge, "0.00008" no. L'offset ha un suo font, va ingrandito
+        # a mano perche' non segue xtick/ytick.labelsize.
+        ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
+        ax.yaxis.get_offset_text().set_fontsize(SLIDE_RC["ytick.labelsize"])
+        h, l = ax.get_legend_handles_labels()
+        if BI_SOURCE == "both" and n_mc:
+            from matplotlib.lines import Line2D
+            h += [Line2D([], [], color="0.4", marker="o", ls="none", mfc="0.4"),
+                  Line2D([], [], color="0.4", ls="-")]
+            l += ["Monte Carlo", "analytic"]
+        ax.legend(h, l, frameon=False, loc="best")
+
+        drawn_ref = None
+        if axd is not None:
+            for a, b in pairs:
+                ta, tb = series(a)[0], series(b)[0]
+                vv, dv, ev = [], [], []
+                for (c, wp), rec in sorted(data[ta].items()):
+                    if c != channel or (c, wp) not in data[tb]:
+                        continue
+                    dd = delta_pct(rec, data[tb][(c, wp)], a, b)
+                    if dd is not None:
+                        vv.append(rec["vbias"]); dv.append(dd)
+                        ee = delta_err(rec, data[tb][(c, wp)], a, b)
+                        ev.append(0.0 if ee is None else ee)
+                if vv:
+                    drawn_ref = series(a)[0]
+                    col = DELTA_COLOR if len(pairs) == 1 else color(tb)
+                    axd.errorbar(vv, dv, yerr=ev, marker=marker(tb), ms=SLIDE_MS, lw=2.4,
+                                 mfc=col, mec="white", mew=1.2, color=col,
+                                 capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=pair_label(a, b))
+            axd.axhline(0, color="0.4", lw=1.4)
+            axd.set_ylabel("ΔBI  [%]")
+            axd.set_xlabel("bias voltage  [V]")
+            axd.legend(frameon=False, loc="best")
+            axd.margins(y=0.25)
+        else:
+            ax.set_xlabel("bias voltage  [V]")
+        set_bias_axis(ax)
+
+        fig.tight_layout()
+        kind = {"both": "mc+analytic", "mc": "mc", "analytic": "analytic"}[BI_SOURCE]
+        if n_mc == 0:
+            kind = "analytic"
+        out = os.path.join(OUT_DIR, f"slide_BI-{kind}_ch{channel}"
+                           + (f"_inj-{gen}" if kind != "analytic" else "") + ".png")
+        fig.savefig(out, dpi=150, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
 def smooth(y, size=51):
     """Mediana mobile: i filtri addestrati sono frastagliati e senza questa il confronto
     fra due set non si legge."""
@@ -568,6 +815,77 @@ def plot_total_filters(data, channel, which, keys):
     return out
 
 
+def plot_channels(data, keys, chans, what):
+    """Figura d'INSIEME: una curva per CANALE, tutti e cinque sullo stesso asse.
+
+    Due modalita', stessa forma (x = bias), quindi una funzione sola:
+      what="BI"    -> il BI del set di riferimento (il PRIMO di SETS), sorgente COMPARE_ON.
+                      E' il "risultato con il filtro ottimo sui 5 canali".
+      what="delta" -> il Delta BI [%] della PRIMA coppia di PAIRS, con le barre d'errore.
+                      E' il quadro d'insieme del guadagno, canale per canale.
+    Restituisce None se non c'e' niente da disegnare."""
+    with plt.rc_context(SLIDE_RC):
+        fig, ax = plt.subplots(figsize=(11, 7))
+        drawn = False
+        if what == "BI":
+            tag = REFERENCE if REFERENCE in keys else keys[0]
+            for ch in chans:
+                col, mk = ch_style(ch, chans)
+                v, y, e = [], [], []
+                for (c, wp), rec in sorted(data[tag].items()):
+                    if c != ch:
+                        continue
+                    got = bi_of(rec, COMPARE_ON)
+                    if got is not None:
+                        v.append(rec["vbias"]); y.append(got[0]); e.append(got[1])
+                if v:
+                    drawn = True
+                    ax.errorbar(v, y, yerr=e, marker=mk, ms=SLIDE_MS, lw=2.4, mfc=col, mec="white",
+                                mew=1.2, color=col, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=f"Ch {ch}")
+            ax.set_ylabel("BI  [counts / keV / kg / yr]")
+            if BI_TARGET:
+                ax.axhline(BI_TARGET, color="tab:red", ls="--", lw=2.2, zorder=1,
+                           label="CUPID pile-up target")
+            ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
+            ax.yaxis.get_offset_text().set_fontsize(SLIDE_RC["ytick.labelsize"])
+            src = "Monte Carlo" if COMPARE_ON == "mc" else "analytic"
+            ax.set_title(f"{LABELS[tag]}\nbackground index vs bias voltage — {src}")
+            name = f"slide_BI-channels_{tag}"
+        else:
+            spec_a, spec_b = PAIRS[0]
+            ta, tb = series(spec_a)[0], series(spec_b)[0]
+            if ta not in keys or tb not in keys:
+                plt.close(fig); return None
+            for ch in chans:
+                col, mk = ch_style(ch, chans)
+                v, y, e = [], [], []
+                for (c, wp), rec in sorted(data[ta].items()):
+                    if c != ch or (c, wp) not in data[tb]:
+                        continue
+                    dd = delta_pct(rec, data[tb][(c, wp)], spec_a, spec_b)
+                    if dd is not None:
+                        ee = delta_err(rec, data[tb][(c, wp)], spec_a, spec_b)
+                        v.append(rec["vbias"]); y.append(dd); e.append(0.0 if ee is None else ee)
+                if v:
+                    drawn = True
+                    ax.errorbar(v, y, yerr=e, marker=mk, ms=SLIDE_MS, lw=2.4, mfc=col, mec="white",
+                                mew=1.2, color=col, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=f"Ch {ch}")
+            ax.axhline(0, color="0.4", lw=1.4)
+            ax.set_ylabel("ΔBI  [%]")
+            ax.set_title(f"{pair_label(spec_a, spec_b)}\nrelative change of the background "
+                         f"index — negative = better")
+            name = "slide_dBI-channels"
+        if not drawn:
+            plt.close(fig); return None
+        ax.set_xlabel("bias voltage  [V]")
+        set_bias_axis(ax)
+        ax.legend(frameon=False, ncol=2 if len(chans) > 3 else 1, loc="best")
+        fig.tight_layout()
+        out = os.path.join(OUT_DIR, name + ".png")
+        fig.savefig(out, dpi=150, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
 def summary_table(data, keys):
     """Mediane sui punti in comune. Le colonne analitiche e simulate sono SEPARATE: se il
     Monte Carlo non c'e' la sua colonna resta vuota, non prende il valore analitico."""
@@ -608,9 +926,22 @@ def summary_table(data, keys):
         print(f"\ncoppia {pair_label(a, b)}: {len(z)} punti, z mediano {np.median(z):+.2f}, "
               f"|z|>2 in {(np.abs(z) > 2).mean():.0%} dei casi")
         print("  z calcolato con le sole sigma del Monte Carlo, e solo dove il MC c'e' per "
-              "tutti e due i set.\n  Gli eventi sono gli STESSI nei due set (stesso seed), "
-              "quindi i BI sono correlati e lo z\n  e' conservativo. E sigma_BI e' errore di "
-              "NSIM: alzando NSIM ogni differenza diventa\n  'significativa'.")
+              "tutti e due i set.\n  Con piu' seed in comune l'errore e' quello APPAIATO sui "
+              "seed (covarianza inclusa),\n  altrimenti la quadratura (rho = 0, conservativa). "
+              "E' comunque errore di NSIM: alzando NSIM\n  ogni differenza diventa "
+              "'significativa'.")
+        # quanto l'errore appaiato stringe la barra rispetto alla quadratura: e' il numero da
+        # citare per giustificare le barre (e da li' la correlazione efficace fra i due BI)
+        shrink = []
+        for k, rec in data[ta].items():
+            if k in data[tb] and paired(rec, data[tb][k], a, b) is not None:
+                A, B = bi_mc(rec), bi_mc(data[tb][k])
+                quad = 100.0 * B[0] / A[0] * np.hypot(A[1] / A[0], B[1] / B[0])
+                shrink.append(delta_err(rec, data[tb][k], a, b) / quad)
+        if shrink:
+            s = float(np.median(shrink))
+            print(f"  errore appaiato ({len(shrink)} punti): mediana {s:.3f} x la quadratura "
+                  f"-> correlazione efficace rho ~ {1 - s**2:+.4f}")
 
 
 def main():
@@ -625,6 +956,7 @@ def main():
         print(f"[OK]   {tag:<14s} = {LABELS[tag]:<38s} ({len(d)} coppie da {folder})")
     if not keys:
         raise SystemExit("[ERROR] nessun set disponibile")
+    align_seeds(data, keys)
 
     chans = sorted({c for lab in keys for (c, _) in data[lab]})
     if ONLY_CHANNELS:
@@ -635,9 +967,17 @@ def main():
         if not chans:
             raise SystemExit(f"[ERROR] ONLY_CHANNELS={ONLY_CHANNELS} non seleziona niente")
     for ch in chans:
-        print(f"   -> {os.path.relpath(plot_bi(data, ch, keys), BASE_DIR)}")
+        maker = plot_bi_slide if SLIDE else plot_bi
+        print(f"   -> {os.path.relpath(maker(data, ch, keys), BASE_DIR)}")
+        if SLIDE:
+            continue                    # la griglia dei filtri non e' una figura da slide
         for which in ("f1", "f2"):
             out = plot_total_filters(data, ch, which, keys)
+            if out:
+                print(f"   -> {os.path.relpath(out, BASE_DIR)}")
+    if SLIDE:
+        for what in ("BI", "delta"):
+            out = plot_channels(data, keys, chans, what)
             if out:
                 print(f"   -> {os.path.relpath(out, BASE_DIR)}")
     summary_table(data, keys)
