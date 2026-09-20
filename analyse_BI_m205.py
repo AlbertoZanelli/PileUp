@@ -242,7 +242,8 @@ ACCEPTANCE = 0.9
 WINDOW_SIZE = 10_000
 SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
-N_TRIALS = 300
+N_TRIALS = 500          # stesso numero di passi del programma Wiener, cosi' le due curve di
+                        # addestramento (e i tempi) sono confrontabili
 
 T_MIN, T_MAX, N_T = 0, 8e-4, 100
 R_MIN, R_MAX, N_R = 0.0, 0.5, 100
@@ -251,7 +252,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #   beta_Hz = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
 #   rho_t   = SNR * beta  = figura di merito temporale per il pile-up (Hz)
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "template", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "template", "BI", "J_final", "n_trials", "train_s"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -354,6 +355,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
     signal_amp_torch = torch.tensor(signal_amp, dtype=torch.float32, device=device)
 
     # ── Optimise filters ──────────────────────────────────────────────────────
+    t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     f1_opt, f2_opt, J_values = an.optimize_filters(
         S_torch, H_unit_torch, w_torch,
         shared["t_torch"], shared["r_torch"], nps_torch,
@@ -366,6 +368,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         use_interp = True,
         verbose = False,
     )
+    train_s = time.perf_counter() - t_train
 
     BI_estimate = float(J_values[-1]) * fn.K
 
@@ -381,6 +384,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "template": TEMPLATE_SOURCE,
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        "n_trials": N_TRIALS,
+        "train_s": round(train_s, 1),
         # Storia dell'addestramento (non entra nel CSV): J passo per passo, per vedere SE e
         # DOVE si appiana. Il filtro ottimo non ha lambda, il kernel S*/NPS e' fisso.
         "J_hist": np.asarray(J_values, dtype=float),
@@ -438,7 +443,8 @@ def run_worker(channel: int, wp: int):
         hist_dir = os.path.join(OUTPUT_DIR, "training_history")
         os.makedirs(hist_dir, exist_ok=True)
         np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"), J=res["J_hist"])
-        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
+        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  "
+              f"({res['n_trials']} passi in {res['train_s']:.0f} s)  ->  {OUTPUT_CSV}")
 
     except Exception as e:
         # L'errore finisce nel file di stderr del job (LOG_DIR); nessuna riga nel CSV.

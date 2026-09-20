@@ -139,6 +139,18 @@ Output `residual_scan_bessel/fits_<AP_SOURCE>/`.
   now takes `history=` (dict → loss, s1, s2 per step, backward compatible) and the npz stores them.
   New knob `RUN_TAG` suffixes the results folder, so a test run cannot overwrite a campaign.
   Test still TO RUN on the server: `RUN_TAG="_conv3000"`, `N_TRIALS=3000`, `ONLY_CHANNELS=[31]`.
+- **λ is NOT identifiable — exact degeneracy, measured 2026-09-20.** J, s1 and s2 depend ONLY on the
+  product g_i = f_i·W(λ). Taking a trained point (ch31 wp29) and rescaling the band filters by the
+  exact kernel ratio W(λ₀)/W(λ₁) while moving λ by ×0.1, ×3, ×100 leaves J unchanged to **1e-6** and
+  s1, s2 identical to 6 digits. So λ drifting while the loss is flat = the optimizer sliding along a
+  flat (gauge) direction; the applied filter does not move. Consequences: the `lambda_wiener` column
+  is gauge, NOT physics — never compare λ across points or campaigns; the "λ collapse" without
+  penalty is only a symptom (what matters is s, the noise amplification of the product); judge
+  convergence on the loss and on s1/s2, never on λ. Natural fix if it ever matters: fix λ = 1 and
+  train f1, f2 only (same reachable optimum, one parameter less, no drift).
+- Both training programs now write `n_trials` and `train_s` (seconds of the optimizer alone) in the
+  results CSV and print them; `analyse_BI_m205.py` uses `N_TRIALS = 500` like the Wiener one (was
+  300), so the two curves and times are comparable. ~2.4 s/step locally → ~20 min per point at 500.
 - `reliability_R(...)` / `USE_R` (R(f) template regularization) still exists; superseded by the
   penalty, only meaningful with the `root` template.
 - **Paper bug** (their `build_mean_pulse_filteralignement`): the phase `exp(−2πi·shift/N)` lacks
