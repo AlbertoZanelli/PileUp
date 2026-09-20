@@ -97,8 +97,22 @@ GEN_TEMPLATE = "fit"        # "root" | "fit"
 # NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.
 
 
+_KNOWN_TOKEN = r"(_npsclean|_R|_(?:sbar|swna)[0-9.eE+-]+)"
+
+
+def split_run_tag(tag):
+    """(tag della campagna, RUN_TAG). Il RUN_TAG e' il suffisso libero dei lanci di prova
+    (es. "_hist", "_conv3000", vedi RUN_TAG nei due programmi di training): sta in fondo, DOPO
+    l'ultimo token noto del nome (_npsclean, _R, _swna<w>, _sbar<s>), e non descrive la
+    campagna. Senza toglierlo finirebbe dentro il tag dell'AP simulato e il template non si
+    troverebbe piu'."""
+    ends = [m.end() for m in re.finditer(_KNOWN_TOKEN, tag)]
+    return (tag, "") if not ends else (tag[:max(ends)], tag[max(ends):])
+
+
 def _parse_results_name(name):
-    """(filter_type, train_template, sim_ap_from, nps_source) dedotti dal nome della cartella."""
+    """(filter_type, train_template, sim_ap_from, nps_source) dedotti dal nome della cartella.
+    Un eventuale RUN_TAG in fondo viene ignorato: non cambia ne' filtri ne' template."""
     if name.startswith("m205_results_octopus"):
         base, tag = "optimum", name[len("m205_results_octopus"):]
     elif name.startswith("m205_results_wiener"):
@@ -110,6 +124,7 @@ def _parse_results_name(name):
     # analysis_BI_m205_wiener_regolarized.py, es. "_sbar0.15" / "_swna1"): e' l'ULTIMO tag
     # aggiunto al nome, e non cambia nulla per il MC -- la penalita' agisce solo in training,
     # il kernel salvato e' quello, e lambda si legge comunque dal CSV. Si toglie e si prosegue.
+    tag, _run = split_run_tag(tag)
     tag = re.sub(r"_(sbar|swna)[0-9.eE+-]+$", "", tag)
     nps = "clean" if tag.endswith("_npsclean") else "octopus"
     tag = tag[:-len("_npsclean")] if nps == "clean" else tag

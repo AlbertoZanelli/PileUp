@@ -120,6 +120,11 @@ def describe(spec):
             break
     else:
         raise SystemExit(f"[ERROR] nome non riconosciuto: {folder}")
+    # RUN_TAG dei lanci di prova (es. "_hist"): sta dopo l'ultimo token noto del nome e non
+    # descrive la campagna. Si stacca subito, altrimenti finisce nel nome del template; resta
+    # pero' nell'etichetta, altrimenti due set diversi si chiamerebbero uguale.
+    ends = [x.end() for x in re.finditer(r"(_npsclean|_R|_(?:sbar|swna)[0-9.eE+-]+)", tag)]
+    tag, run = (tag, "") if not ends else (tag[:max(ends)], tag[max(ends):])
     m = re.search(r"_(sbar|swna)[0-9.eE+-]+$", tag)
     pen_tag, pen_label = PENALTY.get(m.group(1), ("", "")) if m else ("", "")
     tag = tag[:m.start()] if m else tag
@@ -141,10 +146,10 @@ def describe(spec):
     # scritto uguale su ogni set e non distinguerebbe niente
     inj = "" if gen == MC_GEN else gen
     short = (f"{filt}{pen_tag}-{train}" + ("-npsoct" if nps == "octopus" else "")
-             + (f"-inj{inj}" if inj else ""))
+             + (f"-inj{inj}" if inj else "") + run.replace("_", "-"))
     label = (FILTER_LABEL.get(filt, filt) + pen_label
              + f" - train {train}" + ("  (Octopus NPS)" if nps == "octopus" else "")
-             + (f" - inj {inj}" if inj else ""))
+             + (f" - inj {inj}" if inj else "") + (f"  [{run[1:]}]" if run else ""))
     return short, label
 
 
