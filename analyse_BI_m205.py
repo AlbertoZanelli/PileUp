@@ -117,9 +117,14 @@ def sim_folder_tag(tag):
     return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
 
 
+# Suffisso libero per lanci di PROVA (es. "_hist"): cambia la cartella dei risultati, cosi' un
+# ri-addestramento NON sovrascrive i filtri di una campagna gia' usata dal Monte Carlo (f1 e f2
+# partono da un'inizializzazione casuale: riaddestrando si ottengono filtri diversi). "" = normale.
+RUN_TAG = ""
+
 _TAG        = ({"root": "", "fit": "_fit",
                 "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
-               + ("_npsclean" if NPS_SOURCE == "clean" else ""))
+               + ("_npsclean" if NPS_SOURCE == "clean" else "") + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -376,6 +381,9 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "template": TEMPLATE_SOURCE,
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        # Storia dell'addestramento (non entra nel CSV): J passo per passo, per vedere SE e
+        # DOVE si appiana. Il filtro ottimo non ha lambda, il kernel S*/NPS e' fisso.
+        "J_hist": np.asarray(J_values, dtype=float),
         # Filtri di banda e kernel (qui il filtro ottimo H_unit), salvati a parte
         # come .npy in FILTERS_DIR; non entrano nel BI CSV (append_row_to_csv tiene
         # solo CSV_FIELDNAMES). Filtro totale applicato ai dati: g_i = f_i * H_unit.
@@ -427,6 +435,9 @@ def run_worker(channel: int, wp: int):
                                  signal_amp, SAMPLING_RATE, shared, device)
         append_row_to_csv(OUTPUT_CSV, res)
         save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["kernel"])
+        hist_dir = os.path.join(OUTPUT_DIR, "training_history")
+        os.makedirs(hist_dir, exist_ok=True)
+        np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"), J=res["J_hist"])
         print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
 
     except Exception as e:

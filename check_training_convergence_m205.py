@@ -53,14 +53,17 @@ def main():
     for p in files:
         ch, wp = map(int, re.search(r"hist_ch(\d+)_wp(\d+)", p).groups())
         h = np.load(p)
-        J, lam = h["J"], h["lam"]
+        J = h["J"]
+        # il filtro ottimo non ha lambda: il kernel e' S*/NPS, fisso. Si disegna solo J.
+        lam = h["lam"] if "lam" in h.files and len(h["lam"]) else None
         # loss = J + penalita': e' la funzione davvero minimizzata, salvata solo dalle
         # campagne nuove. Se c'e', il verdetto si legge su di lei, non su J.
         loss = h["loss"] if "loss" in h.files and len(h["loss"]) else None
         drop, resid = tail_metrics(loss if loss is not None else J)
-        k = max(2, int(len(lam) * TAIL))
+        k = max(2, int(len(J) * TAIL))
         rows.append(dict(ch=ch, wp=wp, n=len(J), J=J, lam=lam, loss=loss, drop=drop, resid=resid,
-                         lam_drift=100.0 * (lam[-1] - lam[-k]) / abs(lam[-1])))
+                         lam_drift=(np.nan if lam is None else
+                                    100.0 * (lam[-1] - lam[-k]) / abs(lam[-1]))))
     print(f"{RESULTS_NAME}\n{len(rows)} punti, {rows[0]['n']} passi, coda = ultimo {TAIL:.0%}\n")
     print(f"{'ch':>4s} {'calo [%]':>22s} {'residuo [%]':>22s} {'deriva_lambda [%]':>22s}")
     print(f"{'':4s} {'mediana      max':>22s} {'mediana      max':>22s} {'mediana      max':>22s}")
@@ -85,16 +88,20 @@ def main():
             a.set_ylabel("J", color="C0", fontsize=9)
             a.tick_params(axis="y", labelcolor="C0", labelsize=8)
             a.tick_params(axis="x", labelsize=8)
-            a2 = a.twinx()
-            a2.plot(r["lam"], color="C1", lw=1.2, ls="--")
-            a2.set_ylabel("λ", color="C1", fontsize=9)
-            a2.tick_params(axis="y", labelcolor="C1", labelsize=8)
-            a.set_title(f"WP{r['wp']}   last-10% drop {r['drop']:.2f}%,  λ drift "
-                        f"{r['lam_drift']:+.1f}%", fontsize=9)
+            if r["lam"] is not None:
+                a2 = a.twinx()
+                a2.plot(r["lam"], color="C1", lw=1.2, ls="--")
+                a2.set_ylabel("λ", color="C1", fontsize=9)
+                a2.tick_params(axis="y", labelcolor="C1", labelsize=8)
+            a.set_title(f"WP{r['wp']}   last-10% drop {r['drop']:.2f}%"
+                        + ("" if r["lam"] is None else f",  λ drift {r['lam_drift']:+.1f}%"),
+                        fontsize=9)
             a.set_xlabel("step", fontsize=8)
         for a in axes[len(g):]:
             a.axis("off")
-        fig.suptitle(f"{RESULTS_NAME}\nCh{ch} — training: J (physical, = BI/K) and λ", fontsize=12)
+        has_lam = any(r["lam"] is not None for r in g)
+        fig.suptitle(f"{RESULTS_NAME}\nCh{ch} — training: J (physical, = BI/K)"
+                     + (" and λ" if has_lam else "  (optimum filter: no λ)"), fontsize=12)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
         out = os.path.join(BASE_DIR, RESULTS_NAME, f"training_convergence_ch{ch}.png")
         fig.savefig(out, dpi=110)
