@@ -214,7 +214,7 @@ PLOT = [(91, 15)]           # coppie (canale, WP) per cui disegnare le distribuz
 SUBMIT_MODE       = "qsub"    # "qsub" = un job per coppia ; "local" = in sequenza (debug)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # picco misurato: CHUNK=2000 ~2 GB, 4000 3.6 GB; a 500 molto meno
+RAM_GB            = 2         # picco misurato: CHUNK=2000 ~2 GB, 4000 3.6 GB; a 500 molto meno
 MAX_PARALLEL_JOBS = 150
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "MC"      # nome job / throttling via qstat
