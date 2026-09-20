@@ -132,7 +132,6 @@ if not _csv:
     raise SystemExit(f"[ERROR] nessun CSV dei risultati in {RESULTS_DIR}")
 BI_CSV      = _csv[0]
 FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")
-OUT_CSV     = os.path.join(RESULTS_DIR, "BI_mc_error_m205.csv")
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -152,11 +151,23 @@ ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
 
 # Parametri della simulazione (gli stessi del calcolo analitico in analyse_BI_m205.py)
 NSIM        = 50_000        # eventi per popolazione; l'errore MC scala come 1/sqrt(NSIM)
-CHUNK       = 2_000         # eventi generati per volta. simulate_frequency_pulses alloca sei
+CHUNK       = 4_000         # eventi generati per volta. simulate_frequency_pulses alloca sei
                             # array (n, 10000) COMPLESSI: a n=20000 sono 3.2 GB l'uno, ~19 GB in
                             # tutto, e il processo viene ucciso dall'OOM killer. Generando a
                             # blocchi il picco scende come CHUNK/NSIM (a 1000: ~1 GB).
 SEED        = 1234
+N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC, una riga per seed (colonna `seed`).
+                            # Servono all'errore di Delta BI: due cartelle girate con gli stessi
+                            # seed vedono gli STESSI eventi, quindi Delta BI seed per seed contiene
+                            # la covarianza, e la sua dispersione sui seed e' l'errore vero.
+                            # Il seed 0 e' SEED, cioe' la campagna singola gia' fatta.
+N_CHUNKS    = -(-NSIM // CHUNK)       # blocchi per popolazione: il blocco k usa seed + k
+SEED_STRIDE = 2 * N_CHUNKS + 1        # passo fra un seed e il successivo: nessun blocco condiviso,
+                                      # nemmeno con PAIRED_NOISE=False (pile-up da seed + N_CHUNKS)
+# Un seed solo -> il CSV di sempre; piu' seed -> un CSV A PARTE, col numero di seed nel nome, cosi'
+# le due modalita' non si mescolano. In entrambi ogni riga ha la colonna `seed`.
+OUT_CSV     = os.path.join(RESULTS_DIR, "BI_mc_error_m205.csv" if N_SEEDS == 1
+                           else f"BI_mc_error_m205_seeds{N_SEEDS}.csv")
 ACCEPTANCE  = 0.9
 T_MAX       = 8e-4          # ritardo massimo del pile-up [s] (= T_MAX del BI analitico)
 DETECTOR_SIGMA = 0.0        # spread di ampiezza AGGIUNTIVO al rumore. 0.0 = solo rumore, che e'
@@ -203,7 +214,7 @@ ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
 LOG_DIR           = os.path.join(RESULTS_DIR, "logs_mc")
 JOBS_DIR          = os.path.join(RESULTS_DIR, "jobs_mc")
 
-CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "train", "nps", "filter",
+CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "seed", "train", "nps", "filter",
                   "BI_analytic", "BI_mc", "sigma_BI", "rp", "sigma_rp", "nsim", "ratio"]
 
 
@@ -321,8 +332,8 @@ def train_kernel(channel, wp, nps, row):
     return W.detach().cpu().numpy()
 
 
-def run_pair(channel, wp, row):
-    """BI Monte Carlo + incertezza per una coppia (canale, WP)."""
+def run_pair(channel, wp, row, seed=SEED):
+    """BI Monte Carlo + incertezza per una coppia (canale, WP), eventi generati da `seed`."""
     signal_amp = float(row["signal_amp"])
     meanpulse, nps = load_row_inputs(channel, wp)
     S, w, H_unit = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
@@ -343,9 +354,9 @@ def run_pair(channel, wp, row):
     f1 = full_spectrum(np.load(os.path.join(FILTERS_DIR, f"f1_ch{channel}_wp{wp}.npy")))
     f2 = full_spectrum(np.load(os.path.join(FILTERS_DIR, f"f2_ch{channel}_wp{wp}.npy")))
 
-    psd_single = simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, 0.0, SEED)
+    psd_single = simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, 0.0, seed)
     psd_pileup = simulate_psd(S, nps, w, H_unit, f1, f2, signal_amp, T_MAX,
-                              SEED if PAIRED_NOISE else SEED + 1)
+                              seed if PAIRED_NOISE else seed + N_CHUNKS)
 
     cut = np.percentile(psd_single, 100 - ACCEPTANCE * 100)
     rp = float(np.mean(psd_pileup < cut))              # frazione di pile-up RIGETTATA
@@ -423,13 +434,14 @@ def make_sim_ap(rows, gen):
             print(f"{ch:>4d} {wp:>3d}   {tag} {e}")
 
 
-ROW_KEY = ("channel", "wp", "gen")
+ROW_KEY = ("channel", "wp", "gen", "seed")
 
 
 def row_key(r):
-    """Identita' di una riga: il PUNTO e la CAMPAGNA. Due run che differiscono per il
-    template iniettato sono righe diverse, non la stessa riga riscritta."""
-    return tuple(str(r.get(k, "") or "") for k in ROW_KEY)
+    """Identita' di una riga: il PUNTO, la CAMPAGNA e il SEED. Due run che differiscono per il
+    template iniettato o per il seed sono righe diverse, non la stessa riga riscritta.
+    Una riga senza seed (CSV di prima di N_SEEDS) e' la run fatta con SEED."""
+    return tuple(str(r.get(k) or (SEED if k == "seed" else "")) for k in ROW_KEY)
 
 
 def read_rows(path):
@@ -571,20 +583,23 @@ def run_worker(channel, wp):
         return
     r = rows[0]
     bi_an = float(r["BI"])
-    try:
-        res = run_pair(channel, wp, r)
-    except Exception as e:
-        print(f"[ERROR] ch {channel} wp {wp}: {e}")
-        return
-    append_row_to_csv(OUT_CSV, dict(
-        channel=channel, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE, train=TRAIN_TEMPLATE,
-        nps=NPS_SOURCE, filter=FILTER_TYPE, BI_analytic=bi_an, BI_mc=res["BI_mc"],
-        sigma_BI=res["sigma_BI"], rp=res["rp"], sigma_rp=res["sigma_rp"], nsim=NSIM,
-        ratio=res["BI_mc"] / bi_an))
-    if (channel, wp) in PLOT:
-        plot_pair(channel, wp, res, bi_an)
-    print(f"[OK] ch {channel} wp {wp}: BI_mc={res['BI_mc']:.4e} +- {res['sigma_BI']:.1e} "
-          f"(analitico {bi_an:.4e}, rapporto {res['BI_mc']/bi_an:.3f})  ->  {OUT_CSV}")
+    for i in range(N_SEEDS):
+        seed = SEED + i * SEED_STRIDE
+        try:
+            res = run_pair(channel, wp, r, seed)
+        except Exception as e:
+            print(f"[ERROR] ch {channel} wp {wp} seed {seed}: {e}")
+            return
+        append_row_to_csv(OUT_CSV, dict(
+            channel=channel, wp=wp, vbias=r["vbias"], gen=GEN_TEMPLATE, seed=seed,
+            train=TRAIN_TEMPLATE, nps=NPS_SOURCE, filter=FILTER_TYPE, BI_analytic=bi_an,
+            BI_mc=res["BI_mc"], sigma_BI=res["sigma_BI"], rp=res["rp"],
+            sigma_rp=res["sigma_rp"], nsim=NSIM, ratio=res["BI_mc"] / bi_an))
+        if i == 0 and (channel, wp) in PLOT:
+            plot_pair(channel, wp, res, bi_an)
+        print(f"[OK] ch {channel} wp {wp} seed {seed}: BI_mc={res['BI_mc']:.4e} "
+              f"+- {res['sigma_BI']:.1e} (analitico {bi_an:.4e}, rapporto "
+              f"{res['BI_mc']/bi_an:.3f})  ->  {OUT_CSV}")
 
 
 def select_rows():
@@ -630,8 +645,11 @@ def main():
           + ("  [auto-consistente: e' anche il template del training]"
              if GEN_TEMPLATE == TRAIN_TEMPLATE else "  [incrociato]"))
     print(f"  righe nel CSV: {'sovrascritte' if OVERWRITE else 'accodate'} "
-          f"(chiave: canale, WP, gen)")
-    print(f"  {len(rows)} coppie (canale, WP), NSIM={NSIM}, chunk={CHUNK}, "
+          f"(chiave: canale, WP, gen, seed)")
+    print(f"  seed: {[SEED + i * SEED_STRIDE for i in range(N_SEEDS)]}  (stessi per ogni "
+          f"cartella: e' questo che rende confrontabili filtri diversi)")
+    print(f"  {len(rows)} coppie (canale, WP) x {N_SEEDS} seed (passo {SEED_STRIDE}), "
+          f"NSIM={NSIM}, chunk={CHUNK}, "
           f"paired_noise={PAIRED_NOISE}, fold_ratio={FOLD_RATIO}, "
           f"detector_sigma={DETECTOR_SIGMA}\n")
 
