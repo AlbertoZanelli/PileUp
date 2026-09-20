@@ -774,7 +774,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
                                    n_trials=500, activation_fct=None, pulse_center_ratio=0.5,
                                    f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
                                    use_R=False, N_events=None, beta_R=2.0, eps_R=1e-12,
-                                   s_penalty=None,
+                                   s_penalty=None, history=None,
                                    verbose=True, use_interp=False):
     """
     Wiener filter optimization with a trainable noise-modulation factor lambda.
@@ -909,6 +909,13 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             s1 = var1.clamp_min(0) ** 0.5 / signal_amp
             s2 = var2.clamp_min(0) ** 0.5 / signal_amp
             loss = J + s_penalty(s1, s2)
+        # `history` (dict, opzionale): la loss EFFETTIVAMENTE minimizzata e le s, che in
+        # J_values non ci sono. Serve a vedere se il training e' arrivato a regime.
+        if history is not None:
+            history.setdefault("loss", []).append(loss.item())
+            if s_penalty is not None:
+                history.setdefault("s1", []).append(s1.item())
+                history.setdefault("s2", []).append(s2.item())
         loss.backward()
         optimizer.step()
         scheduler.step()
