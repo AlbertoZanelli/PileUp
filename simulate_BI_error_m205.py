@@ -176,7 +176,8 @@ N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC: il seed SEED + i 
 # Un seed solo -> il CSV di sempre; piu' seed -> un CSV A PARTE, col numero di seed nel nome, cosi'
 # le due modalita' non si mescolano. In entrambi ogni riga ha la colonna `seed`.
 OUT_NAME    = "BI_mc_error_m205.csv" if N_SEEDS == 1 else f"BI_mc_error_m205_seeds{N_SEEDS}.csv"
-FOLDERS     = [folder_info(n) for n in [RESULTS_NAME] + list(COMPARE)]
+# senza doppioni: RESULTS_NAME ripetuto in COMPARE si simula una volta sola
+FOLDERS     = [folder_info(n) for n in dict.fromkeys([RESULTS_NAME] + list(COMPARE))]
 # la NPS GENERA gli eventi: con NPS diverse le cartelle non vedrebbero gli stessi eventi
 if len({f["nps"] for f in FOLDERS}) > 1:
     raise SystemExit("[ERROR] COMPARE: le cartelle usano NPS diverse, gli eventi non sarebbero gli stessi")
