@@ -385,7 +385,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #                   del dominio di validita' del modello analitico, vedi S_PENALTY
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
                   "beta_Hz", "rho_t", "lambda_wiener", "template", "use_R", "beta_R", "n_events",
-                  "s1", "s2", "s_penalty", "BI", "J_final"]
+                  "s1", "s2", "s_penalty", "BI", "J_final", "n_trials", "train_s"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -517,6 +517,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     #   funzione di lambda, poi moltiplicato UNA volta per R(f) (reliability_R);
     #   f1, f2 e lambda sono ottimizzati insieme minimizzando J.
     hist = {}                      # loss (J + penalita') e s1, s2 passo per passo
+    t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
         an.optimize_filters_wiener_lambda(
             S_torch, w_torch,
@@ -534,6 +535,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             use_interp = True,
             verbose = False,
         )
+    train_s = time.perf_counter() - t_train
 
     # Risoluzione relativa dei due filtri addestrati, s_i = sigma_i/mu_i (= (A.5)/(A.1) del
     # paper): e' il certificato del dominio di validita' del calcolo analitico. Misurato su
@@ -563,6 +565,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "s_penalty": "" if not S_PENALTY else ":".join(str(x) for x in S_PENALTY),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        "n_trials": N_TRIALS,
+        "train_s": round(train_s, 1),
         # Storia dell'addestramento (non entra nel CSV): serve a vedere SE e DOVE lambda si
         # ferma. J e' sempre quella FISICA, senza penalita', quindi le due curve insieme
         # dicono anche quanto la penalita' ha spostato l'ottimo.
@@ -632,7 +636,8 @@ def run_worker(channel: int, wp: int):
         np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"),
                  J=res["J_hist"], lam=res["lam_hist"], loss=res["loss_hist"],
                  s1=res["s1_hist"], s2=res["s2_hist"])
-        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
+        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  "
+              f"({res['n_trials']} passi in {res['train_s']:.0f} s)  ->  {OUTPUT_CSV}")
 
     except Exception as e:
         # L'errore finisce nel file di stderr del job (LOG_DIR); nessuna riga nel CSV.
