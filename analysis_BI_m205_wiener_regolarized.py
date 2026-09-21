@@ -238,8 +238,11 @@ def sim_folder_tag(tag):
 # identica a 1e-6), quindi fissarla non toglie nulla al risultato RAGGIUNGIBILE; cambia pero' la
 # dinamica. MISURATO su ch31 wp29 (griglia ridotta, 1500 passi): a lambda fissa il costo finale
 # e' +1.15% e non raggiunge il livello della lambda libera -> con questa scelta servono piu' passi.
-LAMBDA_INIT = 1.0
-LR_LAMBDA   = 1e-1       # 0.0 = lambda FISSA a LAMBDA_INIT
+TRAIN_LAMBDA = True      # True  -> lambda addestrabile: optimize_filters_wiener_lambda
+                         # False -> lambda FISSA a LAMBDA_VALUE: optimize_filters_wiener, dove
+                         #          lambda non e' proprio un parametro e il kernel e' costante
+LAMBDA_VALUE = 1.0       # valore iniziale se addestrabile, valore FISSO altrimenti
+                         # (lambda = 1 e' il filtro di Wiener standard)
 
 # Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
 # un test non tocca la campagna buona. "" = campagna normale.
@@ -251,7 +254,7 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                + ("_npsclean" if NPS_SOURCE == "clean" else "")
                + ("" if not S_PENALTY else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
-               + ("" if LR_LAMBDA else "_lam%g" % LAMBDA_INIT)
+               + ("" if TRAIN_LAMBDA else "_lam%g" % LAMBDA_VALUE)
                + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -530,24 +533,51 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     #   f1, f2 e lambda sono ottimizzati insieme minimizzando J.
     hist = {}                      # loss (J + penalita') e s1, s2 passo per passo
     t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
-    f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
-        an.optimize_filters_wiener_lambda(
-            S_torch, w_torch,
+    if not TRAIN_LAMBDA:
+        # ── lambda FISSA ──────────────────────────────────────────────────────
+        # Kernel di Wiener COSTANTE: lambda non e' un parametro, si addestrano solo i filtri
+        # di banda con optimize_filters_wiener. eta_min = lr iniziale tiene il passo costante,
+        # come nella versione con lambda addestrabile: cosi' fra le due cambia UNA cosa sola.
+        if USE_R:
+            raise SystemExit("[ERROR] USE_R con TRAIN_LAMBDA=False non e' implementato")
+        nps_f32 = torch.tensor(np.asarray(nps), dtype=torch.float32, device=device)
+        W_unit = an.compute_W_torch(S_torch, nps_f32, torch.tensor(float(LAMBDA_VALUE)))
+        f1_opt, f2_opt, J_values = an.optimize_filters_wiener(
+            S_torch, W_unit, w_torch,
             shared["t_torch"], shared["r_torch"], nps_torch,
             signal_amp_torch, shared["ratio_distribution_torch"],
             N_sigma = shared["N_sigma"],
             activation_fct = torch.abs,
             f1_init = None,
             f2_init = None,
-            lambda_init = LAMBDA_INIT,
-            lr_lambda = LR_LAMBDA,
-            use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
             s_penalty = make_s_penalty(),
             history = hist,
+            eta_min = 1e-2,
             n_trials = N_TRIALS,
             use_interp = True,
             verbose = False,
         )
+        lam_opt = float(LAMBDA_VALUE)
+        lambda_values = [lam_opt] * len(J_values)   # colonna costante: lambda non si muove
+        W_unit = W_unit.detach()
+    else:
+        f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
+            an.optimize_filters_wiener_lambda(
+                S_torch, w_torch,
+                shared["t_torch"], shared["r_torch"], nps_torch,
+                signal_amp_torch, shared["ratio_distribution_torch"],
+                N_sigma = shared["N_sigma"],
+                activation_fct = torch.abs,
+                f1_init = None,
+                f2_init = None,
+                lambda_init = LAMBDA_VALUE,
+                use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
+                s_penalty = make_s_penalty(),
+                history = hist,
+                n_trials = N_TRIALS,
+                use_interp = True,
+                verbose = False,
+            )
     train_s = time.perf_counter() - t_train
 
     # Risoluzione relativa dei due filtri addestrati, s_i = sigma_i/mu_i (= (A.5)/(A.1) del
