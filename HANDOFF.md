@@ -9,8 +9,45 @@ summarized at the bottom.
 
 **NEXT AGENT: use ponytail mode** (the user asked). Laziest thing that works, config-at-top,
 no scaffolding. Discussion in Italian, plot text in English. **The user commits, not you.**
-**Never run training locally** ("prepara tutto e poi lo runno sul server"). When told
-"non devi fare niente", only read.
+**Never run training locally** ("prepara tutto e poi lo runno sul server") — EXCEPT short
+diagnostic runs on one point, which the user has explicitly asked for and which are fine.
+When told "non devi fare niente", only read.
+
+---
+
+## ⚠ READ THIS FIRST — 2026-09-20/21 overturned the FINAL RESULT below
+
+**1. OF and Wiener are the SAME filter family. Measured, not argued.** The applied filter is
+`g_i = f_i · kernel` and `f_i` is a free NON-NEGATIVE REAL function of frequency. The ratio
+`H_optimum / W_wiener` is real and positive at every frequency (imaginary part 8e-8 of the
+modulus, min sign +7e-6, ch34 wp15), so the band filters absorb the kernel difference exactly:
+`{f·H} = {f·W} = {positive function × S*}`. **No choice of λ can leave a family you are already
+in.** Any OF-vs-Wiener difference is optimization dynamics, not physics.
+
+**2. λ is not identifiable (gauge).** Rescaling a trained point by the exact kernel ratio
+W(λ₀)/W(λ₁) and moving λ by ×0.1, ×3, ×100 leaves J unchanged to **1e-6** and s1, s2 identical
+to 6 digits. The `lambda_wiener` column is gauge, never compare it across points/campaigns.
+
+**3. The old −3% gain was an artefact of unequal training.** OF used `N_TRIALS = 300`, Wiener
+500. With both at 500 (the `_hist` campaigns) the analytic gain drops to ≈ −0.8%.
+
+**4. And that residual analytic gain evaporates in the MC.** ch34, 15 points, all at 500 steps:
+
+| variant | ΔBI analytic | ΔBI **Monte Carlo** | better than OF | MC/an | s₁ |
+|---|---|---|---|---|---|
+| Wwna (λ trainable) | −0.96% | **+0.01%** | 7/15 | 1.019 | 0.030 |
+| λ=1, no penalty | −1.53% | **+0.61%** | 1/15 | 1.027 | 0.062 |
+| λ=1, with penalty | −1.28% | **+0.46%** | 1/15 | 1.026 | 0.049 |
+| OF | — | — | — | **1.009** | — |
+
+The analytic gain is exactly cancelled by the analytic model being MORE optimistic for Wiener
+(MC/an 1.019–1.027 vs 1.009), and the ordering follows s₁: the more the filter amplifies noise,
+the more the first-order σ_Y expansion lies. **Never conclude from the analytic BI.**
+
+**NEXT STEP THE USER CHOSE: free the PHASE of the band filters** (idea 2 below) — today `f` is
+real ≥ 0, so the total filter's phase is nailed to S*'s; a complex `f` genuinely enlarges the
+family, and phase is exactly what carries the pile-up DELAY. The next agent runs the test and
+reports whether the gain is tangible **on the MC**.
 
 ---
 
@@ -48,6 +85,11 @@ no scaffolding. Discussion in Italian, plot text in English. **The user commits,
 ---
 
 ## FINAL RESULT (campaign `APsimfit10000led`, NPS clean, MC gen = fit, NSIM = 50 000)
+
+> **STALE — do not quote.** These OF numbers come from a 300-step training against Wiener's 500
+> (see READ THIS FIRST). The 50-seed MC on these same folders gives ΔBI medians −2.29% (ch31),
+> −2.52 (34), −2.36 (71), −2.78 (83), −0.91 (91), global −1.59%, Wwna better in 71/75, z from
+> −20 to −52 — but at EQUAL training steps the gain is ≈ −0.8% analytic and ≈ 0 on the MC.
 
 Folders: `m205_results_octopus_APsimfit10000led_npsclean` (OF),
 `m205_results_wiener_APsimfit10000led_npsclean` (W, no penalty),
@@ -295,12 +337,26 @@ allows **MC vs analytic of the same model**), `MC_GEN`, `BI_SOURCE = "mc"|"analy
 - **Building the simulated AP at the ROI amplitude**: noise-dominated, AP noisier than the real one.
 - Generating a simulated AP from the **real AP** (its noise is copied in every pulse).
 - `timing_filter` in `src/analysis.py`: tried and reverted.
+- **Chasing a gain on the ANALYTIC BI**: it rewards filters that amplify noise, because the
+  first-order σ_Y model is more optimistic for them (MC/an 1.009 OF → 1.027 λ=1). Every
+  conclusion must be taken on the MC.
+- **Fixing λ = 1** (ch34, with and without the s-penalty, 500 steps): analytic −1.3/−1.5%, but
+  MC **+0.5/+0.6%**, i.e. worse than OF in 14/15 points. Same for λ trainable: MC +0.01%.
+- Freezing λ from step 0 (+1.15% cost, never catches up) and lr of the filters at 3e-1
+  (+1.06%, unstable).
+- Choosing λ without training: the "equivalent λ" of the trained filters has median ≈ 2 but the
+  Wiener family alone misses the trained filter by 0.25 dex, and three analytic criteria
+  (crossover at the OF-weight peak / median / RMS band β) correlate only 0.24–0.34 with it.
+  λ = 1 is the defensible default, and it is what Wiener theory says anyway.
 
 ## BUGS FIXED IN SHARED CODE (`src/`)
 - `src/simulation.py`: `simulate_frequency_pulses` injected √2 too much noise (MC/an +21% → +2.8%).
 - `extract_AP_pulses_m205.py` SyntaxError from a half-merged edit.
 
-## THE PAPER (`~/Desktop/Pileup_Paper_EPJC-2.pdf`)
+## THE PAPER (`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/Pileup_Paper_EPJC-2.pdf`)
+- **It uses ONLY the classical optimum filter**, `H(ω) = ŝ*(ω)/P_N(ω)` normalised so
+  `∫H·ŝ = 1`. The words Wiener / regularization / Tikhonov / deconvolution appear **zero** times
+  (checked with pypdf). λ, the s-penalty and R(f) are all our additions, not theirs.
 - Analytic vs simulated BI **< 8%**, simulated is higher; they **report the simulated BI**.
 - Template is the largest systematic (up to 13%); single high-energy pulses give artificially
   low BI through the "residual high-frequency noise imprint" — exactly our overtraining.
@@ -310,19 +366,76 @@ allows **MC vs analytic of the same model**), `MC_GEN`, `BI_SOURCE = "mc"|"analy
 ---
 
 ## NEXT STEPS
-1. Sync to server + commit (user): `compare_templates_m205.py` (BI_TARGET),
-   `make_slide_figures_m205.py`, `slides_figures/`, new comparison folders.
-   `plot_BI_distributions_m205.py` (reuses compare_templates' config + functions) → per channel
-   `dist_BI_ch<ch>.png` (BI_s over seeds per set, σ_p(BI_s)/σ_formula) and `dist_dBI_ch<ch>.png`
-   (paired ΔBI_s, median ± error of the median), in the comparison folder. Tested on synthetic data.
-2. IN PROGRESS: ONE compare-mode launch (RESULTS_NAME = OF, COMPARE = W + Wwna
-   `APsimfit10000led_npsclean`), N_SEEDS = 50, CHUNK 500: 75 jobs, ~2.4 h each,
-   then `compare_templates_m205.py` → ΔBI with the paired (covariance) error.
-3. Future work (thesis): choose the WP using the expected BI, not only the SNR.
-4. Never done: β selection by 19+19 cross-fit; bootstrap over the 38 pulses for the physical
+
+**1. START HERE — free the PHASE of the band filters (the user picked this).**
+Today `f = activation(f_param)` is real ≥ 0 and mirrored hermitian, so the total filter is
+`positive × S*`: the phase is frozen and OF/Wiener span the same set (see READ THIS FIRST).
+A COMPLEX `f` (two real parameter vectors, modulus and phase, or real+imag) enlarges the family
+for real, and phase is what encodes the DELAY between the two piled-up pulses — the thing being
+discriminated. Where to touch: `optimize_filters_wiener_lambda` / `optimize_filters_wiener` in
+`src/analysis.py` (the `torch.cat([f, f[1:-1].flip(0)])` mirroring must become
+`torch.cat([f, conj(f[1:-1].flip(0))])` for a complex f, like `full_spectrum` does for the
+kernel), plus `compute_vars_wiener` (check whether it assumes `f` real: it uses `|f|²` and
+`f·Re(conj(W)S)` — the second term needs `Re(conj(f·W)·S)` when f is complex).
+Test protocol: one channel (34 is the cleanest), 500 steps, same template and NPS, then
+**simulate_BI_error (MC) and compare on the MC BI, not the analytic one**; quote ΔBI with the
+paired error (`compare_templates_m205.py` already does it if you run ≥2 seeds).
+Guard rail: a complex f can fake a gain by exploiting template noise — check MC/an stays ≈ 1.01
+and s stays ≤ 0.05, exactly as for the λ tests.
+
+**Other ideas for a REAL gain** (same family problem, ordered by effort/benefit):
+2. Train on the right objective: the analytic J is biased by 1–3% and biased DIFFERENTLY per
+   filter, which is why analytic gains evaporate. A differentiable surrogate of the MC survival
+   fraction (soft cut on simulated events) optimises what is actually measured.
+3. More than two bands + a multivariate discriminant (linear/quadratic on 3–4 filtered
+   amplitudes) instead of the ratio of two — OF stays a special case, so it cannot do worse.
+4. Neyman–Pearson likelihood ratio between "single" and "pile-up", marginalised over amplitude,
+   delay and energy ratio: the only route with a theoretical optimality guarantee.
+5. Reduce the amplitude-estimator bias (discrete argmax → the periodic cost spikes, one every
+   ~170 steps, up to +6.6%): a smoother interpolation lowers s and shrinks MC/an.
+
+**Training mechanics, measured (ch31 wp29, reduced 40×40 grid, 1500 steps unless stated):**
+- 500 steps is NOT converged: the loss flattens only around **1500** (conv3000 test at full
+  grid: M drops another −2.4% between 500 and 3000, BI −3.0%).
+- `lr` of the band filters **3e-2** halves the steps (472 vs 972 to stay within 0.5% of the
+  asymptote) for +0.10% cost; 1e-1 → 295 steps for +0.33%; 3e-1 is unstable (+1.06%).
+- λ converges for free if its lr decays to 0 (cosine, or off at half): drift +2.4% → 0.0–0.2%,
+  cost unchanged. **Freezing λ from step 0 costs +1.15%** and never catches up.
+- `eta_min` is a FLOOR, not a factor: with `eta_min = 1e-2` the filters' lr never decays and
+  λ's stops at 1e-2; passing `lr_lambda = 0` made λ's lr RISE 0 → 1e-2 (now guarded).
+
+**Housekeeping still open:**
+6. Future work (thesis): choose the WP using the expected BI, not only the SNR.
+7. Never done: β selection by 19+19 cross-fit; bootstrap over the 38 pulses for the physical
    BI uncertainty; fits for ch40/41/94.
-5. Decide with the relatore how to present the NPS change (clean vs Octopus) vs collaboration
+8. Decide with the relatore how to present the NPS change (clean vs Octopus) vs collaboration
    numbers.
+9. The L-curve for the penalty weight `w` (J vs s₁²+s₂² as w scans 0…10, pick the corner) would
+   replace "we chose w = 1" with a criterion that has a name (Hansen) and a reference. λ is NOT
+   the parameter to apply it to — the penalty weight is.
+
+## New tools and knobs (2026-09-19/21) — all pushed
+- `simulate_BI_error_m205.py`: `N_SEEDS` (50 runs, one row per seed, `seed` column),
+  `CHUNK = 500` (fastest; **CHUNK changes the events**, keep it equal across campaigns),
+  **compare mode** `COMPARE = [...]` (events generated ONCE per seed and passed through every
+  folder's filters, each writes its own CSV — identical events by construction, 1.8× faster).
+  Check: `test/check_compare_mode_m205.py`.
+- `compare_templates_m205.py`: reads all seeds, `align_seeds` keeps only the seeds common to all
+  sets, BI = median, σ = √(π/2)·σ_p/√n with `robust_sigma` = (P84−P16)/2, ΔBI **paired** seed by
+  seed (covariance included: the paired error is 0.35× the quadrature, effective ρ ≈ 0.88).
+- `plot_BI_distributions_m205.py`: `dist_BI_ch<ch>.png`, `dist_dBI_ch<ch>.png`.
+- `check_training_convergence_m205.py`: tail metrics + per-channel grids + `DETAIL = [(ch, wp)]`
+  four-panel figure (loss, zoom, λ, s₁/s₂). `--selftest` included.
+- Both training programs: `RUN_TAG` (results-folder suffix for test runs; the name parsers of
+  compare/simulate strip it), `n_trials` and `train_s` columns, `history=` in the optimizers
+  (loss, s1, s2 per step, saved in the npz), `N_TRIALS = 500` in the OF one too (was 300).
+- Wiener program: `TRAIN_LAMBDA` / `LAMBDA_VALUE`. With `TRAIN_LAMBDA = False` it calls the
+  OTHER function, `optimize_filters_wiener` (λ is not a parameter at all), and the folder gets
+  `_lam<value>`. Verified: with the same initial filters and λ = 1 the two functions give J
+  identical **bit for bit**, so a λ-fixed vs λ-free comparison differs in exactly one thing.
+- 50-seed MC results (`BI_mc_error_m205_seeds50.csv`, 4 folders): σ_p(BI_s)/σ_formula = 0.88,
+  i.e. `compute_BI_uncertainty` **overestimates the per-run MC error by ~14%**; the new
+  event scheme agrees with the old single-seed runs to 0.9954 ± 0.52%.
 
 ## Earlier threads (DONE — background)
 - `test/fit_one_pulse_m205.py` (single-pulse fit, CSV has no `cost` column).
