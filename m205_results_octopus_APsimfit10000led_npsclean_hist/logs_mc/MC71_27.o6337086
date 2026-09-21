@@ -1,0 +1,2 @@
+[OK] m205_results_octopus_APsimfit10000led_npsclean_hist ch 71 wp 27 seed 1234: BI_mc=4.6449e-05 +- 4.8e-07 (analitico 4.5462e-05, rapporto 1.022)
+[OK] m205_results_wiener_APsimfit10000led_npsclean_swna1_hist ch 71 wp 27 seed 1234: BI_mc=4.6502e-05 +- 4.8e-07 (analitico 4.4882e-05, rapporto 1.036)

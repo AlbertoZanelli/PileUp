@@ -120,7 +120,7 @@ def sim_folder_tag(tag):
 # Suffisso libero per lanci di PROVA (es. "_hist"): cambia la cartella dei risultati, cosi' un
 # ri-addestramento NON sovrascrive i filtri di una campagna gia' usata dal Monte Carlo (f1 e f2
 # partono da un'inizializzazione casuale: riaddestrando si ottengono filtri diversi). "" = normale.
-RUN_TAG = ""
+RUN_TAG = "_hist"
 
 _TAG        = ({"root": "", "fit": "_fit",
                 "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
@@ -150,7 +150,7 @@ AMP_CSV = next((p for p in (os.path.join(BASE_DIR, "amplitudes_m205.csv"),
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # GB per job
+RAM_GB            = 3         # GB per job
 MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat

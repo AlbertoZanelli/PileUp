@@ -1,0 +1,2 @@
+[OK] m205_results_octopus_APsimfit10000led_npsclean_hist ch 83 wp 1 seed 1234: BI_mc=1.6089e-04 +- 8.1e-07 (analitico 1.5901e-04, rapporto 1.012)
+[OK] m205_results_wiener_APsimfit10000led_npsclean_swna1_hist ch 83 wp 1 seed 1234: BI_mc=1.6234e-04 +- 8.1e-07 (analitico 1.5640e-04, rapporto 1.038)

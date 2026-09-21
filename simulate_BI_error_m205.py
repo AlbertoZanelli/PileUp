@@ -75,15 +75,14 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean"
+RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean_hist"
 
 # 1b) COMPARE: MODALITA' CONFRONTO. Altre cartelle da simulare INSIEME a RESULTS_NAME: per ogni
 #     seed gli eventi si generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna
 #     scrive nel proprio CSV. Gli eventi sono identici per costruzione (e' su questo che si regge
 #     l'errore appaiato di Delta BI) e la generazione, ~70% del tempo, si paga una volta sola.
 #     Log, job e copia congelata stanno in RESULTS_NAME. [] = una cartella sola, come prima.
-COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean",
-           "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
+COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -181,7 +180,7 @@ CHUNK       = 500           # eventi generati per volta. simulate_frequency_puls
                             # veloce (cache) fino a ~500. CAMBIA GLI EVENTI (vedi simulate_psd):
                             # stesso valore in tutte le campagne che si confrontano.
 SEED        = 1234
-N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC: il seed SEED + i genera UNA
+N_SEEDS     = 1            # ripetizioni INDIPENDENTI del MC: il seed SEED + i genera UNA
                             # simulazione completa da NSIM eventi per popolazione, una riga per
                             # seed (colonna `seed`). Servono all'errore di Delta BI: due cartelle
                             # girate con gli stessi seed vedono gli STESSI eventi, quindi Delta BI
