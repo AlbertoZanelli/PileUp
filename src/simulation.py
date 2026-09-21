@@ -3,6 +3,36 @@ from utility.double_beta_spectrum import inverse_cdf_ratio2b
 
 from scipy.signal import bessel, bilinear, lfilter
 
+def build_event_bank(S, nps, w, signal_amp, nsim, dt_max, chunk=500, seed=1234,
+                     detector_sigma=0.0, fold_ratio=False):
+    """Banco di impulsi simulati nel TEMPO, (nsim, len(S)) float32.
+
+    E' la stessa ricetta di simulate_BI_error_m205.py: generazione a blocchi di `chunk`
+    (il generatore alloca sei array complessi (n, 10000), a nsim intero il processo viene
+    ucciso per memoria) con UN SOLO Generator per tutto il banco, cosi' il flusso continua
+    da un blocco all'altro e `seed` identifica l'intero banco. `dt_max = 0` -> impulsi
+    SINGOLI, `dt_max > 0` -> PILE-UP.
+
+    NB: gli eventi dipendono da `chunk`, perche' dentro un blocco le estrazioni vanno per
+    tipo -- va tenuto uguale fra campagne che si confrontano.
+
+    `S` e `w` sono quelli di analysis.compute_H sul template di GENERAZIONE (il fit): si
+    passano, non si ricostruiscono, cosi' non si duplica la convenzione di compute_H.
+
+    Serve a chi deve applicare piu' filtri AGLI STESSI eventi: la validazione durante il
+    training (un banco, tanti passi) e i confronti appaiati.
+    """
+    rng = np.random.default_rng(seed)
+    chunks = []
+    for k in range(0, nsim, chunk):
+        n = min(chunk, nsim - k)
+        fp, *_ = simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=n, seed=rng,
+                                           signal_scale=signal_amp, dt_max=dt_max,
+                                           fold_ratio=fold_ratio)
+        chunks.append(np.fft.ifft(fp, axis=1).real.astype(np.float32))
+    return np.concatenate(chunks)
+
+
 def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, signal_scale=0.002, dt_max=8e-4,
                               fold_ratio=False):
     """

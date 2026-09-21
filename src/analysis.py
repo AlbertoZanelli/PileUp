@@ -343,7 +343,12 @@ def compute_A(muY, sigmaY, N_sigma=1.28):
     Returns:
         torch.Tensor: Computed probability value.
     """
-    return 1 - norm.cdf((1-muY-N_sigma*sigmaY[0, 0]) / sigmaY)
+    # Il taglio sta a N_sigma sigma SOTTO i singoli, e i singoli sono muY[0, 0] (r=0, t=0),
+    # non 1: con f REALE >= 0 la normalizzazione mean(|f W S|) = 1 rende il picco esattamente
+    # 1 e le due scritture coincidono, ma con f COMPLESSA (PHASE) |f W S| != f W S, i singoli
+    # finiscono altrove (misurato 0.833, MC 0.836) e il taglio scritto a 1 stava 7 sigma
+    # sopra di loro: J crollava per un taglio sbagliato, non per il filtro.
+    return 1 - norm.cdf((muY[0, 0] - muY - N_sigma*sigmaY[0, 0]) / sigmaY)
 
 
 def compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distribution,
@@ -479,7 +484,17 @@ def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_
 # Use these together with compute_W instead of compute_H.
 # =============================================================================
 
-def compute_vars_wiener(W_unit, S, nps, f1, f2):
+def _peak_response(g, jitter_max=20):
+    """Picco del segnale filtrato g = f*W*S (dominio delle frequenze), cercato entro
+    +-jitter_max campioni dal centro dell'impulso, com'e' il massimo cercato da
+    compute_mu_sigma e da get_PSD_interpole_torch. Scala come sum(g), cosi' con f reale
+    coincide con la somma usata finora."""
+    y = torch.fft.ifft(g).real
+    j = jitter_max
+    return torch.cat([y[..., :j + 1], y[..., -j:]], dim=-1).max(dim=-1).values * y.shape[-1]
+
+
+def compute_vars_wiener(W_unit, S, nps, f1, f2, jitter_max=20):
     """
     Noise propagation for the applied Wiener kernel ``g_i = f_i * W_unit``, written
     in the same self-normalizing ``num / R^2`` style as :func:`compute_vars` so that
@@ -529,8 +544,18 @@ def compute_vars_wiener(W_unit, S, nps, f1, f2):
     num1 = torch.sum(abs_f1 ** 2 * W_nps)
     num2 = torch.sum(abs_f2 ** 2 * W_nps)
     cross = torch.sum((f1 * torch.conj(f2)) * W_nps)
-    R1 = torch.sum(abs_f1 * resp)
-    R2 = torch.sum(abs_f2 * resp)
+    # Con f REALE >= 0 il template filtrato ha il picco a t=0 e la risposta e' la somma
+    # sum(f_i * Re(W S)) (bit per bit come sempre: nessuna campagna cambia). Con f COMPLESSA
+    # la fase sposta e ABBASSA il picco -- |sum| <= sum|.| -- mentre quella somma non se ne
+    # accorge: userebbe la risposta a fase nulla con il rumore della fase libera, cioe' un
+    # guadagno finto. Nel caso complesso la risposta e' il PICCO vero del template filtrato,
+    # cercato nella stessa banda +-jitter_max in cui lo stimatore cerca il massimo.
+    if f1.is_complex() or f2.is_complex():
+        R1 = _peak_response(f1 * W_unit * S, jitter_max)
+        R2 = _peak_response(f2 * W_unit * S, jitter_max)
+    else:
+        R1 = torch.sum(abs_f1 * resp)
+        R2 = torch.sum(abs_f2 * resp)
     var1 = num1 / (R1.abs() ** 2)
     var2 = num2 / (R2.abs() ** 2)
     cov12 = cross / (R1 * torch.conj(R2))
@@ -595,7 +620,8 @@ def compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, s
 def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribution, N_sigma=1.28,
                             n_trials=1000, activation_fct=None, pulse_center_ratio=0.5,
                             f1_init=None, f2_init=None, verbose=True, use_interp=False,
-                            s_penalty=None, history=None, eta_min=1e-5):
+                            s_penalty=None, history=None, eta_min=1e-5, phase=False,
+                            validate=None, val_every=25):
     """
     Wiener-filter version of :func:`optimize_filters`.
 
@@ -624,6 +650,24 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
         f1_init, f2_init (torch.Tensor or None, optional): Initial filters.
         verbose (bool, optional): Whether to print progress. Defaults to True.
         use_interp (bool, optional): Whether to interpolate the peak. Defaults to False.
+        phase (bool, optional): If True the band filters are COMPLEX, ``f = |f| * exp(i*p)``
+            with a second trainable vector ``p`` (0 at DC and Nyquist, so the mirrored
+            spectrum stays Hermitian and the time-domain filter real). Defaults to False,
+            which is the historical real, non-negative filter, bit for bit.
+
+            Why: with f real >= 0 the applied filter is ``positive_function * S*``, so its
+            PHASE is frozen to the template's and the optimum filter and Wiener span exactly
+            the same set (measured: H/W is real positive at every frequency). A complex f is
+            the smallest change that genuinely enlarges the family, and the phase is what
+            carries the DELAY between the two piled-up pulses, i.e. the thing being
+            discriminated. ``p`` starts at 0, so phase training starts exactly from the real
+            optimum and can only be a superset.
+        validate (callable or None, optional): ``f(step, f1, f2, W_unit, J, lam)`` called every
+            ``val_every`` steps (and at the last one) with the current filters, detached; the
+            return value is ignored. Same hook as in :func:`optimize_filters_wiener_lambda`, so
+            a campaign can produce a validation curve in either lambda mode. Here ``lam`` is
+            ``float('nan')``: the kernel is fixed, lambda is not a parameter at all.
+        val_every (int, optional): Steps between validation calls. Defaults to 25.
 
     Returns:
         tuple: ``(f1, f2, J_values)`` with the optimized filters and the J history.
@@ -644,8 +688,18 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
         f2_init = f2_init[:n // 2 + 1]
     f1_param = torch.nn.Parameter(f1_init.to(S.device))
     f2_param = torch.nn.Parameter(f2_init.to(S.device))
+    params = [f1_param, f2_param]
+    if phase:
+        # Fase per bin, in radianti, inizializzata a 0. La maschera azzera DC e Nyquist: sono
+        # gli unici bin senza gemello nel mirror, quindi devono restare REALI o l'ifft del
+        # filtro non e' reale.
+        p1_param = torch.nn.Parameter(torch.zeros_like(f1_init, device=S.device))
+        p2_param = torch.nn.Parameter(torch.zeros_like(f2_init, device=S.device))
+        edge_mask = torch.ones_like(f1_init, device=S.device)
+        edge_mask[0] = edge_mask[-1] = 0.0
+        params += [p1_param, p2_param]
 
-    optimizer = torch.optim.Adam([f1_param, f2_param], lr=1e-2)
+    optimizer = torch.optim.Adam(params, lr=1e-2)
     # eta_min = 1e-2 (cioe' il learning rate iniziale) lascia il passo COSTANTE, come fa
     # optimize_filters_wiener_lambda: e' quello che serve per confrontare lambda fissa e
     # lambda addestrabile senza cambiare anche lo schedule. Il default 1e-5 e' il
@@ -659,8 +713,13 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
         # Enforce positivity and rebuild the full (Hermitian) spectrum.
         f1 = activation_fct(f1_param)
         f2 = activation_fct(f2_param)
-        f1 = torch.cat([f1, f1[1:-1].flip(0)])
-        f2 = torch.cat([f2, f2[1:-1].flip(0)])
+        if phase:
+            f1 = f1 * torch.exp(1j * p1_param * edge_mask)
+            f2 = f2 * torch.exp(1j * p2_param * edge_mask)
+        # Mirror hermitiano: il coniugato e' un no-op sui tensori reali, quindi lo stesso
+        # ramo vale per f reale e per f complessa.
+        f1 = torch.cat([f1, f1[1:-1].flip(0).conj()])
+        f2 = torch.cat([f2, f2[1:-1].flip(0).conj()])
         # Normalize filters such that mean(|f_i * W_unit * S|) = 1.
         norm1 = torch.mean(torch.abs(f1 * W_unit * S))
         norm2 = torch.mean(torch.abs(f2 * W_unit * S))
@@ -685,6 +744,8 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
             if s_penalty is not None:
                 history.setdefault("s1", []).append(s1.item())
                 history.setdefault("s2", []).append(s2.item())
+        if validate is not None and (step % val_every == 0 or step == n_trials - 1):
+            validate(step, f1.detach(), f2.detach(), W_unit, J.item(), float("nan"))
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -794,7 +855,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
                                    n_trials=500, activation_fct=None, pulse_center_ratio=0.5,
                                    f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
                                    use_R=False, N_events=None, beta_R=2.0, eps_R=1e-12,
-                                   s_penalty=None, history=None,
+                                   s_penalty=None, history=None, validate=None, val_every=25,
                                    verbose=True, use_interp=False):
     """
     Wiener filter optimization with a trainable noise-modulation factor lambda.
@@ -845,6 +906,15 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             does not deliver. Measured on m205, 75 (channel, WP) pairs: s <= 0.15 -> BI_MC/BI_analytic
             <= 1.09; s > 0.2 -> >= 1.57. Passing a penalty here keeps the optimization inside the
             validity domain of the metric. Defaults to None (identical to the previous behavior).
+        validate (callable or None, optional): ``f(step, f1, f2, W_unit, J, lam)`` called every
+            ``val_every`` steps (and at the last one) with the CURRENT filters and kernel,
+            detached. The return value is ignored: the caller records what it wants. It exists
+            because the training loss is the ANALYTIC BI, which is biased differently for
+            different filters -- the only way to know what a mid-training point is really worth
+            is to apply it to simulated events. lambda drifts a lot while J stays flat (it is
+            gauge, see the note above), so a validation curve is the only way to tell whether
+            the early, small-lambda points are actually better than where the optimizer ends up.
+        val_every (int, optional): Steps between validation calls. Defaults to 25.
         verbose (bool, optional): Whether to print progress. Defaults to True.
         use_interp (bool, optional): Whether to interpolate the peak. Defaults to False.
 
@@ -942,6 +1012,8 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             if s_penalty is not None:
                 history.setdefault("s1", []).append(s1.item())
                 history.setdefault("s2", []).append(s2.item())
+        if validate is not None and (step % val_every == 0 or step == n_trials - 1):
+            validate(step, f1.detach(), f2.detach(), W_unit.detach(), J.item(), lam.item())
         loss.backward()
         optimizer.step()
         scheduler.step()

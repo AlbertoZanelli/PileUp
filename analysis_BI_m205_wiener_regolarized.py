@@ -60,9 +60,10 @@ vettori .npy in m205_results_wiener_reg/trained_filters/ i filtri di banda ADDES
 f1, f2 e il KERNEL di Wiener W (file f1_ch{ch}_wp{wp}.npy, f2_ch{ch}_wp{wp}.npy,
 kernel_ch{ch}_wp{wp}.npy). Si salva solo la META' INDIPENDENTE dello spettro (i
 primi N//2+1 bin, da DC a Nyquist); il vettore completo si ricostruisce con
-    full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
-    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
-    full = np.concatenate([half, np.conj(half[-2:0:-1])]).
+    full = np.concatenate([half, np.conj(half[-2:0:-1])]) -- la meta' speculare va
+    CONIUGATA. Con PHASE = False f1/f2 sono REALI e il coniugio e' un no-op; con
+    PHASE = True sono COMPLESSI e serve davvero (full_spectrum in
+    simulate_BI_error_m205.py lo fa gia' in base al dtype).
 Il filtro TOTALE applicato ai dati e' g_i = f_i * W (kernel).
 
 Stima del BI per la misura m205 (load curves), parallelizzata sul cluster:
@@ -244,6 +245,49 @@ TRAIN_LAMBDA = False      # True  -> lambda addestrabile: optimize_filters_wiene
 LAMBDA_VALUE = 1.0       # valore iniziale se addestrabile, valore FISSO altrimenti
                          # (lambda = 1 e' il filtro di Wiener standard)
 
+# ── FASE LIBERA dei filtri di banda ──────────────────────────────────────────────────
+# PHASE = False: f1, f2 REALI >= 0 (tutte le campagne fatte finora). Il filtro applicato e'
+#   g = f * W = (funzione positiva) * S*, quindi la sua FASE e' inchiodata a quella del
+#   template: filtro ottimo e Wiener sono la STESSA famiglia (misurato: H/W e' reale positivo
+#   a ogni frequenza) e nessun lambda puo' farne uscire.
+# PHASE = True: f = |f| * exp(i*p), con p addestrabile (0 a DC e Nyquist). E' il cambiamento
+#   piu' piccolo che allarga davvero la famiglia, e la fase e' proprio cio' che porta il
+#   RITARDO fra i due impulsi impilati. p parte da 0 -> il training parte esattamente
+#   dall'ottimo reale. Solo con lambda FISSA (TRAIN_LAMBDA = False).
+# GUARDIA: una fase libera puo' fingere un guadagno sfruttando il rumore del template, come
+#   faceva lambda. Il verdetto si prende sul BI Monte Carlo, non sull'analitico, e si
+#   controlla che MC/an resti ~1.01 e s1, s2 <= 0.05.
+PHASE = False
+
+# ── VALIDAZIONE durante il training ──────────────────────────────────────────────────
+# Ogni VAL_EVERY passi i filtri correnti (f1, f2 e il kernel del lambda corrente) vengono
+# applicati a EVENTI SIMULATI e si misura il BI Monte Carlo. Serve perche' la loss addestrata
+# e' il BI ANALITICO, distorto in modo DIVERSO per filtri diversi: dalla loss non si vede se un
+# punto intermedio del training valga piu' di quello finale. Le curve finiscono in
+# training_history/hist_ch<ch>_wp<wp>.npz (chiavi val_step, val_lam, val_BI_an, val_BI_mc,
+# val_s1, val_s2) e compare_templates_m205.py ne fa una griglia per canale (PLOT_VALIDATION).
+#
+# Gli eventi sono GENERATI DAL FIT (la "verita'", come GEN_TEMPLATE="fit" del Monte Carlo),
+# mentre il training usa TEMPLATE_SOURCE: con "sim" non c'e' auto-consistenza, ed e' il caso
+# buono. Con TEMPLATE_SOURCE = "fit" training e validazione condividono il template: la curva
+# resta leggibile ma NON misura piu' l'overtraining, e il programma lo avvisa.
+#
+# COSTO: il banco si genera una volta (~10 s), un punto di validazione costa ~9.4 s con 5000
+# eventi per popolazione e scala lineare (misurato su questo Mac). Con VAL_NSIM = 2000 e
+# VAL_EVERY = 25 sono ~80 s in piu' su ~20 minuti di training, cioe' +7%.
+# MEMORIA: il banco occupa 2 * VAL_NSIM * 10000 * 4 byte (2000 -> 160 MB). Il worker era gia'
+# misurato a 2.04 GB di picco: con VALIDATE = True conviene RAM_GB = 4.
+VALIDATE  = False     # True -> curva di validazione nel npz della storia di training
+VAL_EVERY = 25        # passi fra due validazioni
+VAL_NSIM  = 2000      # eventi per popolazione (singoli e pile-up)
+# SEED DIVERSO da quelli del Monte Carlo finale (SEED = 1234, N_SEEDS semi 1234...1283 in
+# simulate_BI_error_m205.py). NON e' un dettaglio: generatore, CHUNK e flusso sono gli stessi,
+# quindi con seed = 1234 il banco di validazione sarebbe ESATTAMENTE i primi VAL_NSIM eventi
+# del run a seme 1234 del MC finale (verificato). Scegliere qualcosa sulla curva di validazione
+# -- dove fermare il training, quale penalita' -- e poi misurarlo su quegli stessi eventi e'
+# leakage: piccolo (il finale e' la mediana su 50 semi) ma gratuito da evitare.
+VAL_SEED  = 9001      # tenerlo FUORI dall'intervallo SEED ... SEED + N_SEEDS - 1
+
 # Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
 # un test non tocca la campagna buona. "" = campagna normale.
 RUN_TAG = "_hist"
@@ -255,6 +299,7 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                + ("" if not S_PENALTY else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
                + ("" if TRAIN_LAMBDA else "_lam%g" % LAMBDA_VALUE)
+               + ("_ph" if PHASE else "")
                + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -441,9 +486,10 @@ def save_filters_npy(dirpath: str, channel, wp, f1, f2, kernel):
     (qui il kernel di Wiener W). Ogni coppia (canale, WP) scrive file con nomi
     distinti, quindi non serve alcun lock. Si salva solo la meta' indipendente
     dello spettro (N//2+1 bin); il vettore completo si ricostruisce con
-        full = np.concatenate([half, half[-2:0:-1]]) per f1/f2 (REALI);
-    per il KERNEL, che e' COMPLESSO, la meta' speculare va CONIUGATA:
-    full = np.concatenate([half, np.conj(half[-2:0:-1])]).
+        full = np.concatenate([half, np.conj(half[-2:0:-1])]) -- la meta' speculare va
+    CONIUGATA. Con PHASE = False f1/f2 sono REALI e il coniugio e' un no-op; con
+    PHASE = True sono COMPLESSI e serve davvero (full_spectrum in
+    simulate_BI_error_m205.py lo fa gia' in base al dtype).
     Il filtro TOTALE applicato ai dati e' g_i = f_i * kernel."""
     os.makedirs(dirpath, exist_ok=True)
     np.save(os.path.join(dirpath, f"f1_ch{channel}_wp{wp}.npy"), _independent_half(f1))
@@ -493,6 +539,56 @@ def build_shared(device) -> dict:
     }
 
 
+def make_validator(channel, wp, S_train, nps, signal_amp, rows):
+    """Callback da passare a optimize_filters_wiener[_lambda]: ogni VAL_EVERY passi applica i
+    filtri correnti al banco di eventi e appende una riga a `rows`.
+
+    Il banco (singoli + pile-up) si genera UNA volta qui e resta lo stesso per tutta la curva:
+    l'errore statistico del singolo punto e' quasi tutto COMUNE ai punti, quindi la FORMA della
+    curva e' molto piu' precisa del valore assoluto (che resta lavoro di
+    simulate_BI_error_m205.py, con 50 000 eventi e 50 semi).
+
+    Il taglio e' lo stesso del Monte Carlo di campagna: ACCEPTANCE sui singoli, sopravvissuti
+    fra i pile-up, niente finestra sugli eventi (window_fct = np.ones)."""
+    import torch
+    import src.analysis as an
+    import src.simulation as sim
+    import src.dataset as ds
+
+    gen_path = os.path.join(FIT_DIR, FIT_PATTERN.format(ch=channel, wp=wp))
+    if not os.path.exists(gen_path):
+        raise RuntimeError(f"VALIDATE: manca il template di generazione {gen_path}")
+    if TEMPLATE_SOURCE == "fit":
+        print("[WARN] VALIDATE con TEMPLATE_SOURCE='fit': training e validazione usano lo "
+              "STESSO template, la curva non misura piu' l'overtraining")
+    gen = np.load(gen_path)
+    S_gen, w_gen, _ = an.compute_H(gen, nps, np.hanning, sampling_rate=SAMPLING_RATE)
+    banks = []
+    for dt_max in (0.0, T_MAX):
+        pulses = sim.build_event_bank(S_gen, nps, w_gen, signal_amp, VAL_NSIM, dt_max,
+                                      seed=VAL_SEED)
+        d = ds.NumpyDataset(pulses)
+        d.win_length = pulses.shape[1]
+        banks.append(d)
+    singles, pileups = banks
+    nps_t = torch.as_tensor(np.asarray(nps), dtype=torch.cfloat)
+
+    def validate(step, f1, f2, W_unit, J, lam):
+        k = W_unit.detach().cpu().numpy()
+        bi, _ = an.compute_BI(pileups, singles, ACCEPTANCE, k,
+                              f1.cpu().numpy(), f2.cpu().numpy(), window_fct=np.ones)
+        v1, v2, _ = an.compute_vars_wiener(W_unit, S_train, nps_t, f1, f2)
+        rows.append(dict(step=step, lam=lam, BI_an=J * fn_K(), BI_mc=bi,
+                         s1=float(v1) ** 0.5 / signal_amp, s2=float(v2) ** 0.5 / signal_amp))
+    return validate
+
+
+def fn_K():
+    """Fattore K del BI (utility.functions.K), importato pigramente come il resto."""
+    import utility.functions as fn
+    return fn.K
+
+
 def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
                        samp_rate, shared, device) -> dict:
     import torch
@@ -532,6 +628,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     #   funzione di lambda, poi moltiplicato UNA volta per R(f) (reliability_R);
     #   f1, f2 e lambda sono ottimizzati insieme minimizzando J.
     hist = {}                      # loss (J + penalita') e s1, s2 passo per passo
+    val_rows = []                  # curva di validazione (vuota se VALIDATE = False)
+    validate = make_validator(channel, wp, S_torch, nps, signal_amp, val_rows) if VALIDATE else None
     t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     if not TRAIN_LAMBDA:
         # ── lambda FISSA ──────────────────────────────────────────────────────
@@ -553,6 +651,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             s_penalty = make_s_penalty(),
             history = hist,
             eta_min = 1e-2,
+            phase = PHASE,
+            validate = validate, val_every = VAL_EVERY,
             n_trials = N_TRIALS,
             use_interp = True,
             verbose = False,
@@ -561,6 +661,9 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         lambda_values = [lam_opt] * len(J_values)   # colonna costante: lambda non si muove
         W_unit = W_unit.detach()
     else:
+        if PHASE:
+            raise SystemExit("[ERROR] PHASE = True e' implementata solo con TRAIN_LAMBDA = False "
+                             "(lambda e' comunque degenere: vedi il commento su TRAIN_LAMBDA)")
         f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
             an.optimize_filters_wiener_lambda(
                 S_torch, w_torch,
@@ -574,6 +677,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
                 use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
                 s_penalty = make_s_penalty(),
                 history = hist,
+                validate = validate, val_every = VAL_EVERY,
                 n_trials = N_TRIALS,
                 use_interp = True,
                 verbose = False,
@@ -620,6 +724,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "loss_hist": np.asarray(hist.get("loss", []), dtype=float),
         "s1_hist": np.asarray(hist.get("s1", []), dtype=float),
         "s2_hist": np.asarray(hist.get("s2", []), dtype=float),
+        # curva di validazione: BI Monte Carlo dei filtri INTERMEDI, sugli stessi eventi
+        "val_rows": val_rows,
         # Filtri di banda e kernel di Wiener (vettori), salvati a parte come .npy in
         # FILTERS_DIR; non entrano nel BI CSV perche' append_row_to_csv tiene solo
         # CSV_FIELDNAMES. Il filtro totale applicato ai dati e' g_i = f_i * kernel.
@@ -676,9 +782,11 @@ def run_worker(channel: int, wp: int):
         save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["kernel"])
         hist_dir = os.path.join(OUTPUT_DIR, "training_history")
         os.makedirs(hist_dir, exist_ok=True)
+        val = {f"val_{k}": np.array([r[k] for r in res["val_rows"]], dtype=float)
+               for k in ("step", "lam", "BI_an", "BI_mc", "s1", "s2")} if res["val_rows"] else {}
         np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"),
                  J=res["J_hist"], lam=res["lam_hist"], loss=res["loss_hist"],
-                 s1=res["s1_hist"], s2=res["s2_hist"])
+                 s1=res["s1_hist"], s2=res["s2_hist"], **val)
         print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  "
               f"({res['n_trials']} passi in {res['train_s']:.0f} s)  ->  {OUTPUT_CSV}")
 
