@@ -230,6 +230,17 @@ def sim_folder_tag(tag):
     return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
 
 
+# ── lambda del kernel di Wiener ──────────────────────────────────────────────────────
+# W = S* / (|S|^2_n + lambda * NPS_n). Con LR_LAMBDA = 0 lambda resta FISSA a LAMBDA_INIT e si
+# addestrano solo i filtri di banda: lambda = 1 e' il filtro di Wiener standard. Il nome della
+# cartella lo registra ("_lam1"), cosi' non si mescola con le campagne a lambda addestrabile.
+# NB lambda e' DEGENERE (verificato: moltiplicarla per 100 riaggiustando i filtri lascia J
+# identica a 1e-6), quindi fissarla non toglie nulla al risultato RAGGIUNGIBILE; cambia pero' la
+# dinamica. MISURATO su ch31 wp29 (griglia ridotta, 1500 passi): a lambda fissa il costo finale
+# e' +1.15% e non raggiunge il livello della lambda libera -> con questa scelta servono piu' passi.
+LAMBDA_INIT = 1.0
+LR_LAMBDA   = 1e-1       # 0.0 = lambda FISSA a LAMBDA_INIT
+
 # Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
 # un test non tocca la campagna buona. "" = campagna normale.
 RUN_TAG = "_hist"
@@ -240,6 +251,7 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                + ("_npsclean" if NPS_SOURCE == "clean" else "")
                + ("" if not S_PENALTY else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
+               + ("" if LR_LAMBDA else "_lam%g" % LAMBDA_INIT)
                + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -527,7 +539,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             activation_fct = torch.abs,
             f1_init = None,
             f2_init = None,
-            lambda_init = 1.0,
+            lambda_init = LAMBDA_INIT,
+            lr_lambda = LR_LAMBDA,
             use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
             s_penalty = make_s_penalty(),
             history = hist,

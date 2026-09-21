@@ -868,10 +868,16 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     log_lambda = torch.nn.Parameter(torch.log(torch.tensor(float(lambda_init), device=S.device)))
 
     lr_lambda = 1e-1 if lr_lambda is None else lr_lambda
-    optimizer = torch.optim.Adam([
-        {"params": [f1_param, f2_param], "lr": 1e-2},
-        {"params": [log_lambda], "lr": lr_lambda},
-    ])
+    # lr_lambda = 0 -> lambda FISSA a lambda_init: si toglie dall'ottimizzatore e le si spegne il
+    # gradiente. NON basta dare learning rate zero: lo scheduler a coseno usa eta_min come
+    # PAVIMENTO, quindi partendo da 0 il learning rate di lambda SALIREBBE fino a eta_min e
+    # lambda ricomincerebbe a muoversi a meta' training.
+    groups = [{"params": [f1_param, f2_param], "lr": 1e-2}]
+    if lr_lambda:
+        groups.append({"params": [log_lambda], "lr": lr_lambda})
+    else:
+        log_lambda.requires_grad_(False)
+    optimizer = torch.optim.Adam(groups)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials, eta_min=1e-2)
     J_values = []
     lambda_values = []
