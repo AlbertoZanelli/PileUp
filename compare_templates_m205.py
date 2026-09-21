@@ -92,6 +92,17 @@ BI_SOURCE = "both"       # "mc" | "analytic" | "both"
 # Disegnato in tutti i pannelli che mostrano il BI. None per non disegnarlo.
 BI_TARGET = 5e-5
 GRID = (5, 3)            # righe x colonne della griglia dei filtri (15 WP)
+
+# ── Griglia delle CURVE DI VALIDAZIONE (una figura per canale, un pannello per WP) ──────
+# Le scrive il training con VALIDATE = True (analysis_BI_m205_wiener_regolarized.py): ogni
+# VAL_EVERY passi i filtri di quel momento vengono applicati a eventi simulati e si misura il
+# BI Monte Carlo. Nel pannello: BI analitico (la loss che si sta minimizzando, tratteggiato) e
+# BI Monte Carlo (pieno), nelle STESSE unita'.
+# Come si legge: se il BI Monte Carlo ha un MINIMO dove l'analitico continua a scendere, il
+# training sta ottimizzando la cosa sbagliata oltre quel passo. Se scendono insieme fino in
+# fondo, il numero di passi va bene e la loss dice il vero.
+# I punti mancano (pannello vuoto) per le cartelle addestrate senza VALIDATE: e' normale.
+PLOT_VALIDATION = True   # False = non prova nemmeno a leggerle
 COLORS = {"m205_results_octopus_APsimfit10000led_npsclean": "C0",
         "m205_results_wiener_APsimfit10000led_npsclean": "C1",
         "m205_results_wiener_APsimfit10000led_npsclean_swna1": "C2"}              # override manuale {tag: colore}; default = ciclo C0, C1, ...
@@ -831,6 +842,76 @@ def plot_total_filters(data, channel, which, keys):
     return out
 
 
+def validation_rows(rec, ch, wp):
+    """Curva di validazione di una coppia (canale, WP) dal npz della storia di training,
+    oppure None se quella cartella non e' stata addestrata con VALIDATE = True."""
+    f = os.path.join(rec["dir"], "training_history", f"hist_ch{ch}_wp{wp}.npz")
+    if not os.path.exists(f):
+        return None
+    with np.load(f) as z:
+        if "val_step" not in z:
+            return None
+        return {k: z[f"val_{k}"] for k in ("step", "lam", "BI_an", "BI_mc", "s1", "s2")}
+
+
+def plot_validation(data, channel, keys):
+    """Una griglia per canale: un pannello per WP con il BI analitico (la loss) e il BI Monte
+    Carlo misurato durante il training, per ogni set che abbia le curve."""
+    wps = sorted({wp for lab in keys for (c, wp) in data[lab] if c == channel})
+    if not wps:
+        return None
+    # righe secondo i WP presenti: a campagna intera (15) e' la GRID di config, ma con una
+    # campagna parziale non lascia mezza pagina vuota (e le etichette x restano visibili)
+    cols = GRID[1]
+    rows = max(1, -(-len(wps) // cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(4.6 * cols, 3.1 * rows),
+                             sharex=True, squeeze=False)
+    drawn, seen_labels = False, []
+    for a, wp in zip(axes.ravel(), wps):
+        seen = set()
+        for lab in keys:
+            rec = data[lab].get((channel, wp))
+            # set che differiscono solo per il template iniettato condividono il training
+            if rec is None or rec["dir"] in seen:
+                continue
+            v = validation_rows(rec, channel, wp)
+            if v is None:
+                continue
+            seen.add(rec["dir"]); drawn = True
+            a.plot(v["step"], v["BI_an"], ls="--", lw=1.2, color=color(lab), alpha=0.7)
+            a.plot(v["step"], v["BI_mc"], marker="o", ms=3.5, lw=1.4, color=color(lab),
+                   label=LABELS[lab])
+            if LABELS[lab] not in seen_labels:
+                seen_labels.append(LABELS[lab])
+        a.set_yscale("log")
+        a.set_title(f"WP{wp}", fontsize=10)
+        a.grid(True, which="both", ls="--", alpha=0.3)
+    for a in axes.ravel()[len(wps):]:
+        a.axis("off")
+    if not drawn:
+        plt.close(fig)
+        return None
+    for a in axes[-1]:
+        a.set_xlabel("training step")
+    for a in axes[:, 0]:
+        a.set_ylabel("BI [counts/keV/kg/yr]")
+    h, l = [], []
+    for ax_ in axes.ravel():
+        hh, ll = ax_.get_legend_handles_labels()
+        for x, y in zip(hh, ll):
+            if y not in l:
+                h.append(x); l.append(y)
+    fig.legend(h, l, loc="upper center", bbox_to_anchor=(0.5, 0.972),
+               ncol=max(1, len(l)), fontsize=11, frameon=False)
+    fig.suptitle(f"m205 Ch{channel} - validation during training:  dashed = analytic BI "
+                 f"(the training loss),  solid = Monte-Carlo BI of the same filters",
+                 y=0.998, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.952])
+    out = os.path.join(OUT_DIR, f"validation_ch{channel}.png")
+    fig.savefig(out, dpi=110); plt.close(fig)
+    return out
+
+
 def plot_channels(data, keys, chans, what):
     """Figura d'INSIEME: una curva per CANALE, tutti e cinque sullo stesso asse.
 
@@ -985,6 +1066,11 @@ def main():
     for ch in chans:
         maker = plot_bi_slide if SLIDE else plot_bi
         print(f"   -> {os.path.relpath(maker(data, ch, keys), BASE_DIR)}")
+        if PLOT_VALIDATION:
+            # diagnostica, non figura da slide: si fa comunque, se i dati ci sono
+            out = plot_validation(data, ch, keys)
+            if out:
+                print(f"   -> {os.path.relpath(out, BASE_DIR)}")
         if SLIDE:
             continue                    # la griglia dei filtri non e' una figura da slide
         for which in ("f1", "f2"):

@@ -44,10 +44,53 @@ The analytic gain is exactly cancelled by the analytic model being MORE optimist
 (MC/an 1.019–1.027 vs 1.009), and the ordering follows s₁: the more the filter amplifies noise,
 the more the first-order σ_Y expansion lies. **Never conclude from the analytic BI.**
 
-**NEXT STEP THE USER CHOSE: free the PHASE of the band filters** (idea 2 below) — today `f` is
-real ≥ 0, so the total filter's phase is nailed to S*'s; a complex `f` genuinely enlarges the
-family, and phase is exactly what carries the pile-up DELAY. The next agent runs the test and
-reports whether the gain is tangible **on the MC**.
+**5. FREE PHASE — DONE 2026-09-21. It enlarges the family for real, and it still LOSES on
+the MC.** `phase=` in `optimize_filters_wiener`, `PHASE` in the Wiener training script, both
+default False. Measured on ch34 wp15, 40×40 grid, 20 000 events per population, all from the
+same random start (`test/check_phase_gain_m205.py`, ~8 min):
+
+| stage | BI analytic | BI **Monte Carlo** | MC/an | ΔBI_mc | s1, s2 | σ_Y an/mc |
+|---|---|---|---|---|---|---|
+| real, 500 steps | 9.35e-5 | 9.49e-5 | 1.01 | — | 0.053, 0.042 | 1.02 |
+| +phase 10 | 1.04e-4 | 1.08e-4 | 1.04 | **+14.3%** | 0.057, 0.031 | 1.02 |
+| +phase 25 | 9.74e-5 | 1.05e-4 | 1.07 | **+10.2%** | 0.051, 0.035 | 1.00 |
+| +phase 50 | 9.15e-5 | 1.04e-4 | 1.14 | **+9.6%** | 0.049, 0.037 | 0.93 |
+| +phase 100 | 6.05e-5 | 1.04e-4 | 1.71 | **+9.1%** | 0.051, 0.045 | 0.42 |
+| phase, 500 steps | 3.78e-5 | 2.36e-4 | 6.24 | **+149%** | 0.059, 0.057 | **0.11** |
+
+The analytic BI improves (−60% at 500 steps) and the true BI is worse at **every** stage, from
+the first ten steps. So the phase is a genuine enlargement of the family (unlike λ, which is
+gauge) but the analytic metric pays for it in fiction.
+
+**The guard that catches it is σ_Y of the SINGLES, analytic vs MC** — new, and better than s.
+The s-penalty sees nothing (s stays 0.03–0.06 everywhere), because what breaks is not the
+resolution of each band but the σ_Y of the RATIO: the phase buys a small σ_Y as the RESIDUE of a
+cancellation between numerator and denominator, exactly the λ-collapse mechanism. The first-order
+σ_Y then underestimates the true one by **8.7×** (0.0019 vs 0.0166 measured), and the ratio
+σ_Y(an)/σ_Y(mc) on single pulses tracks it perfectly: 1.02 with real f, 0.11 with the phase.
+Cheap, one point, no full campaign: **use it as the acceptance test for any new filter family.**
+
+**BUG FOUND AND FIXED on the way — `compute_A` put the cut in the wrong place.** It read
+`1 - N_sigma*sigmaY[0,0]`, i.e. it assumed the SINGLES sit at muY = 1. That is exact for real
+f ≥ 0 (the normalization `mean(|f·W·S|) = 1` makes `f·W·S` real non-negative, so the peak is
+exactly 1) and WRONG for a complex f, where the singles measured 0.833 (MC: 0.836) and the cut
+therefore sat ~7σ above them. Now it reads `muY[0,0] - N_sigma*sigmaY[0,0]`. **Every real-f
+number is unchanged** (ch34 wp15 re-run after the fix: BI_an 9.348e-5 and BI_mc 9.488e-5,
+identical to before), so no campaign moves. The first version of this section quoted a phase
+collapse of four orders of magnitude and a +127% MC: that was the misplaced cut, not the filter.
+
+**Not a parametrization artefact.** Modulus and phase are trained JOINTLY (one Adam, one loss,
+four parameter vectors): in a 50-step run |f| moves 19% AND the phase 0.18 rad. The polar form
+`|f|·exp(ip)` is the same complex family as the cartesian `Re + i·Im` (2 d.o.f. per bin); a
+cartesian run was tried and moves FURTHER into the phase (mean |p| 1.57 rad vs 0.18), never
+less. The polar one is in `src/analysis.py` because it is one line shorter and `|f| > 0`
+everywhere here, so its singularity is never reached.
+
+**CONSEQUENCE: the objective, not the family, is the bottleneck.** Enlarging the filter family
+is pointless while the training metric can be gamed — go to idea 2 below (differentiable
+surrogate of the MC survival fraction). The phase code stays in, off by default, as the measured
+proof; re-test it the day the objective is the MC one, because that day the family may finally
+pay.
 
 ---
 
@@ -367,26 +410,18 @@ allows **MC vs analytic of the same model**), `MC_GEN`, `BI_SOURCE = "mc"|"analy
 
 ## NEXT STEPS
 
-**1. START HERE — free the PHASE of the band filters (the user picked this).**
-Today `f = activation(f_param)` is real ≥ 0 and mirrored hermitian, so the total filter is
-`positive × S*`: the phase is frozen and OF/Wiener span the same set (see READ THIS FIRST).
-A COMPLEX `f` (two real parameter vectors, modulus and phase, or real+imag) enlarges the family
-for real, and phase is what encodes the DELAY between the two piled-up pulses — the thing being
-discriminated. Where to touch: `optimize_filters_wiener_lambda` / `optimize_filters_wiener` in
-`src/analysis.py` (the `torch.cat([f, f[1:-1].flip(0)])` mirroring must become
-`torch.cat([f, conj(f[1:-1].flip(0))])` for a complex f, like `full_spectrum` does for the
-kernel), plus `compute_vars_wiener` (check whether it assumes `f` real: it uses `|f|²` and
-`f·Re(conj(W)S)` — the second term needs `Re(conj(f·W)·S)` when f is complex).
-Test protocol: one channel (34 is the cleanest), 500 steps, same template and NPS, then
-**simulate_BI_error (MC) and compare on the MC BI, not the analytic one**; quote ΔBI with the
-paired error (`compare_templates_m205.py` already does it if you run ≥2 seeds).
-Guard rail: a complex f can fake a gain by exploiting template noise — check MC/an stays ≈ 1.01
-and s stays ≤ 0.05, exactly as for the λ tests.
+**1. Free PHASE of the band filters — DONE and NEGATIVE, see READ THIS FIRST §5.** Do not
+redo it; the code is in (`PHASE = False` by default) and the MC verdict is that it makes the BI
+worse at every training stage. What it DID settle: the phase is a genuine enlargement of the
+family (unlike λ, which is gauge), so the blocker is the training metric.
 
-**Other ideas for a REAL gain** (same family problem, ordered by effort/benefit):
-2. Train on the right objective: the analytic J is biased by 1–3% and biased DIFFERENTLY per
-   filter, which is why analytic gains evaporate. A differentiable surrogate of the MC survival
-   fraction (soft cut on simulated events) optimises what is actually measured.
+**Other ideas for a REAL gain** (ordered by effort/benefit):
+2. **START HERE — train on the right objective.** The analytic J is biased by 1–3% and biased
+   DIFFERENTLY per filter, which is why analytic gains evaporate — and with a free phase the
+   bias reaches four orders of magnitude, so the metric is what is broken, not the family. A
+   differentiable surrogate of the MC survival fraction (soft cut on simulated events, the
+   noisy argmax kept in the graph) optimises what is actually measured. Every larger family
+   (phase, >2 bands, likelihood ratio) is blocked behind this.
 3. More than two bands + a multivariate discriminant (linear/quadratic on 3–4 filtered
    amplitudes) instead of the ratio of two — OF stays a special case, so it cannot do worse.
 4. Neyman–Pearson likelihood ratio between "single" and "pile-up", marginalised over amplitude,
@@ -413,6 +448,146 @@ and s stays ≤ 0.05, exactly as for the λ tests.
 9. The L-curve for the penalty weight `w` (J vs s₁²+s₂² as w scans 0…10, pick the corner) would
    replace "we chose w = 1" with a criterion that has a name (Hansen) and a reference. λ is NOT
    the parameter to apply it to — the penalty weight is.
+
+## Validation curve during training — λ growing is NOT costing anything (2026-09-21)
+The worry: with a trainable λ (ch34 and friends) λ climbs by a lot while J stays nearly flat —
+the band filters reabsorb the kernel — so the loss cannot say whether the early, small-λ points
+(before the filter tends to the OF) are actually worth more. Answer: **apply the current filters
+to simulated events every N steps.** New `validate=` / `val_every=` hook in
+`optimize_filters_wiener_lambda` (calls `f(step, f1, f2, W_unit, J, lam)` with everything
+detached, return value ignored — the caller records) plus `validate_lambda_curve_m205.py`
+(config at the top: channel, WP, `N_TRIALS`, `VAL_EVERY`, `NSIM_VAL`, `GRID`, `S_PENALTY_W`).
+The event bank is generated ONCE from the `fit` template while the training uses the simulated
+AP, so there is no self-consistency, exactly as in the campaigns; the same events at every
+validation make the SHAPE of the curve far more precise than a single point.
+
+**Measured, ch34 wp15, 500 steps, grid 100×100, penalty ("wna", 1.0), 5000 events/population:**
+
+| step | λ | BI analytic | BI MC | MC/an | s1, s2 |
+|---|---|---|---|---|---|
+| 0 | 1.00 | 2.35e-4 | 2.38e-4 | 1.011 | 0.049, 0.049 |
+| 75 | 1.53 | 9.98e-5 | 9.86e-5 | 0.989 | 0.056, 0.029 |
+| 150 | 2.49 | 9.53e-5 | 9.50e-5 | 0.997 | 0.043, 0.026 |
+| 300 | 4.75 | 9.36e-5 | 9.28e-5 | 0.991 | 0.032, 0.022 |
+| 499 | 6.14 | 9.35e-5 | 9.22e-5 | 0.986 | 0.028, 0.021 |
+
+- **The best MC point is the LAST one**: stopping early is worth +0.0%. The hypothesis that the
+  small-λ points are better is NOT confirmed here.
+- **No overtraining at all**: MC/an stays in 0.986–1.011 for the whole run, with no upward
+  drift. The analytic BI is even slightly CONSERVATIVE from step 50 on.
+- Everything happens in the first ~75 steps (2.38e-4 → 9.86e-5). From step 150 to 499 the MC
+  gains only **−3%** while λ goes 2.5 → 6.1 — the flat gauge valley, seen from the MC side.
+- **s1 falls 0.049 → 0.028 as λ rises**: growing λ makes the filter amplify noise LESS, and the
+  MC rewards it slightly. It is the opposite of the λ-collapse pathology (which happens at
+  λ → 0, without the penalty).
+- Cost: bank ~10–20 s once, **~9.4 s per validation point** (5000+5000 events), 21 points ≈
+  3.3 min on top of ~20 min of training, i.e. **+17%**. Both scale linearly with `NSIM_VAL`
+  and 1/`VAL_EVERY`. A single point carries ~2.3% statistical error (survival fraction 0.27),
+  mostly COMMON to the curve.
+**Paired run WITHOUT the penalty, same point, same events** (`S_PENALTY = None`):
+
+| | λ at step 499 | s1, s2 | BI_mc final | MC/an range |
+|---|---|---|---|---|
+| penalty ("wna", 1.0) | 6.14, **still rising** | 0.028, 0.021 | **9.215e-5** | 0.986–1.011 |
+| no penalty | **2.01** (peaks 2.16 at ~375, then comes back) | 0.044, 0.033 | 9.285e-5 | 0.989–1.021 |
+
+- **The λ climb IS the penalty.** Without it λ converges — it even turns around and decreases.
+  The handoff's older "λ does NOT settle in 70/75 points" was measured WITH the penalty and is
+  its signature, not a pathology: the penalty pushes s down, and less noise amplification means
+  a more OF-like filter, i.e. a larger λ.
+- **The penalty does not cost, it gains ~0.75%** on the MC (9.215e-5 vs 9.285e-5, same events),
+  and it is ahead in 5 of the 6 late validation points (steps 250–499) by 0.3–1.0%. CAVEAT: the
+  step-to-step scatter within one run is ~0.4%, so with one seed this is ~2σ — suggestive, not
+  yet quotable. Confirm on several WPs or seeds before putting it in the thesis.
+- **This weakens the "switch to the barrier" idea.** s never exceeds 0.07 in either run, so a
+  barrier at s_max = 0.15 would be identically zero and would reproduce the no-penalty curve
+  exactly — giving up that 0.75%. The wna's lack of a threshold, which looked like a defect
+  (it touches the healthy points too), is mildly BENEFICIAL here.
+- No overtraining in either run: MC/an never drifts up.
+- Figures: `validation_curve_ch34_wp15_{swna1,nopen}.png` and
+  `validation_curve_ch34_wp15_penalty_vs_none.png`, points in the matching `.csv`.
+- **Still open — ch91**, the channel where λ collapsed without the penalty (MC/an 1.20, W 12%
+  worse than OF). That is the only place where "the penalty is needed" and "the barrier is
+  enough" give different answers; ch34 cannot settle it.
+
+## Validation inside the campaign + per-channel grid (2026-09-22)
+The diagnostic loop is now part of the campaign, so a normal training run produces its own
+validation curves and `compare_templates_m205.py` draws them.
+
+- `src/simulation.py`: **`build_event_bank(S, nps, w, signal_amp, nsim, dt_max, chunk, seed)`**
+  — the event bank of `simulate_BI_error_m205.py` extracted into one place (numpy only, no
+  dependency on analysis/dataset: the caller wraps it in `NumpyDataset`). `S` and `w` are
+  passed, not rebuilt, so compute_H's convention is not duplicated. Same chunked generation
+  with ONE Generator, so `seed` identifies the whole bank — and `chunk` still changes the
+  events, keep it equal across campaigns.
+- `src/analysis.py`: the `validate=` / `val_every=` hook is now in **both**
+  `optimize_filters_wiener` (λ fixed — `lam` comes back as `nan`, it is not a parameter there)
+  and `optimize_filters_wiener_lambda`. It calls `f(step, f1, f2, W_unit, J, lam)` with
+  everything detached and ignores the return: the caller records.
+- `analysis_BI_m205_wiener_regolarized.py`: config **`VALIDATE`, `VAL_EVERY = 25`,
+  `VAL_NSIM = 2000`** and `make_validator(...)`. The bank is generated ONCE per (channel, WP)
+  from the **fit** template (the truth) while training uses `TEMPLATE_SOURCE`; with
+  `TEMPLATE_SOURCE = "fit"` the two coincide and the program warns that the curve no longer
+  measures overtraining. The BI is `an.compute_BI(..., window_fct=np.ones)` — the same cut as
+  the campaign MC, and `np.ones` matters: `compute_BI`'s default is `np.hanning`, which
+  `simulate_BI_error_m205.py` does NOT use. Curves go into
+  `training_history/hist_ch<ch>_wp<wp>.npz` as `val_step, val_lam, val_BI_an, val_BI_mc,
+  val_s1, val_s2`; the file keeps its old keys, so `check_training_convergence_m205.py` is
+  unaffected. **Cost +7%** (2000 events, every 25 steps, ~80 s on ~20 min) and +160 MB of RAM
+  → with `VALIDATE = True` set **`RAM_GB = 4`**.
+- **`VAL_SEED = 9001`, deliberately OUTSIDE the final MC's seeds** (`SEED = 1234`, i.e.
+  1234…1283 in `simulate_BI_error_m205.py`). Generator, CHUNK and stream are the same, so with
+  seed 1234 the validation bank would be EXACTLY the first `VAL_NSIM` events of the seed-1234
+  run of the final MC — verified: the first 1000 events of a 2000-event bank are bit for bit a
+  1000-event bank. Choosing anything on the validation curve (where to stop, which penalty) and
+  then quoting a BI measured on those same events is leakage: small (the final number is the
+  median over 50 seeds) but free to avoid. Apart from the seed and the number of events, the
+  validation MC is IDENTICAL to the campaign one: same generator, `DETECTOR_SIGMA = 0`,
+  `FOLD_RATIO = False`, CHUNK 500, one Generator per population, paired singles/pile-up
+  (`PAIRED_NOISE = True`), dt_max = 8e-4, fit template, no window on the events, cut at the
+  10th percentile of the singles, `BI = K(1-rp)`. Statistics: ~3.7% per point at 2000 events
+  vs ~0.7% at 50 000.
+  **NB: the ch34 and ch91 curves of 2026-09-21/22 were made with seed 1234** (the old default):
+  they stay paired among themselves, but they do not compare event by event with newer ones.
+- `compare_templates_m205.py`: **`PLOT_VALIDATION`** and `plot_validation()` → one figure per
+  channel, one panel per WP, `validation_ch<ch>.png` in the comparison folder: dashed = the
+  analytic BI being minimised, solid = the Monte-Carlo BI of the same filters, same units.
+  Folders trained without `VALIDATE` simply have no curve. Rows adapt to the number of WPs.
+  Read it: a MINIMUM of the MC curve where the analytic keeps falling = training past that step
+  is optimising the wrong thing.
+- Verified end to end on a short run (ch34, wp15 and wp17, 7 steps, 500 events): npz keys,
+  figure and grid all produced; the smoke folder was deleted afterwards.
+- Pre-existing, untouched: `compare_templates_m205.py` with a SINGLE set crashes in
+  `plot_channels(what="delta")` because `PAIRS` is empty (needs ≥2 sets, as always).
+
+## Phase filters — what the code now does (2026-09-21)
+- `src/analysis.py`:
+  - `_peak_response(g, jitter_max)`: peak of the filtered template, searched in the same
+    ±jitter_max band the estimator uses. New helper.
+  - `compute_vars_wiener(..., jitter_max=20)`: with f REAL it is **bit for bit what it was**
+    (`sum(f·Re(WS))`); with f COMPLEX the response is `_peak_response`. This is not cosmetic:
+    a phase can only LOWER the peak (`|Σ| ≤ Σ|·|`), and the old sum would have paired the
+    zero-phase response with the free-phase noise, i.e. a fake gain by construction.
+  - `optimize_filters_wiener(..., phase=False)`: `f = |f|·exp(i·p)`, `p` trainable, 0 at DC and
+    Nyquist, mirror `cat([f, f[1:-1].flip(0).conj()])` (`.conj()` is a no-op on real tensors, so
+    there is ONE code path). `p` starts at 0, so phase training starts exactly at the real
+    optimum. Not implemented for `optimize_filters_wiener_lambda` (raises).
+- `analysis_BI_m205_wiener_regolarized.py`: `PHASE` config flag, folder suffix `_ph` (the name
+  parsers of simulate/compare already treat everything after `_lam<v>` as RUN_TAG, so nothing
+  else was needed). Complex f1/f2 save and reload unchanged: `_independent_half` slices and
+  `full_spectrum` in `simulate_BI_error_m205.py` already conjugates when the dtype is complex,
+  and `get_PSD_interpole` already takes the `.real` of the ifft over ±20 samples.
+- `compute_A` in `src/analysis.py`: the acceptance cut is now `muY[0,0] - N_sigma*sigmaY[0,0]`
+  (was a hardcoded `1`). Exact identity for real f, correctness requirement for complex f. See
+  READ THIS FIRST §5.
+- Checks: `test/check_phase_filters_m205.py` (real branch unchanged, hermitian mirror, a pure
+  delay is neutral, a random phase is penalised, phase=True starts at the real J) and
+  `test/check_phase_gain_m205.py` (the MC verdict above). Both run locally with
+  **`OMP_NUM_THREADS=1`** — with more threads torch+scipy segfault on this Mac.
+- **NOT COMMITTED** (the user commits): `src/analysis.py`, `src/simulation.py`,
+  `compare_templates_m205.py`, `validate_lambda_curve_m205.py`,
+  `analysis_BI_m205_wiener_regolarized.py`, `test/check_phase_filters_m205.py`,
+  `test/check_phase_gain_m205.py`, `HANDOFF.md`.
 
 ## New tools and knobs (2026-09-19/21) — all pushed
 - `simulate_BI_error_m205.py`: `N_SEEDS` (50 runs, one row per seed, `seed` column),
