@@ -28,6 +28,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_swna1"
 TAIL = 0.10              # frazione finale dei passi su cui si misurano calo e deriva
 GRID = (5, 3)
+# Punti per cui fare anche la figura DETTAGLIATA a quattro pannelli (costo, zoom, lambda, s):
+# [(canale, wp), ...]; [] = nessuna. Loss e s ci sono solo nelle campagne girate col
+# salvataggio della history (history= in optimize_filters_wiener_lambda).
+DETAIL = [(31, 29)]
 
 
 def tail_metrics(y):
@@ -42,6 +46,45 @@ def tail_metrics(y):
     if not np.isfinite(rho) or rho >= 1:
         return drop, np.inf
     return drop, 100.0 * d[-1] * rho / (1 - rho) / abs(y[-1])
+
+
+def plot_detail(r):
+    """Figura a quattro pannelli per UN punto: costo (loss e M), zoom sulla coda, lambda in
+    scala log, s1 e s2. E' la vista che serve per dire SE il costo converge e cosa fa lambda."""
+    J, lam, loss, s1, s2 = r["J"], r["lam"], r["loss"], r.get("s1"), r.get("s2")
+    n = np.arange(len(J))
+    k = max(1, len(J) // 10)
+    fig, ax = plt.subplots(2, 2, figsize=(12, 7.5))
+    a = ax[0, 0]
+    if loss is not None:
+        a.plot(n, loss, "C3", label="loss = M + penalty")
+    a.plot(n, J, "C0", lw=1.2, label="M (physical, = BI/K)")
+    a.set_ylabel("cost"); a.set_title("cost function"); a.legend(fontsize=9)
+    a = ax[0, 1]
+    if loss is not None:
+        a.plot(n[k:], loss[k:], "C3")
+    a.plot(n[k:], J[k:], "C0", lw=1.2)
+    a.set_title(f"zoom (dal passo {k})"); a.set_ylabel("cost")
+    a = ax[1, 0]
+    if lam is None:
+        a.text(0.5, 0.5, "nessun λ (filtro ottimo)", ha="center", transform=a.transAxes)
+    else:
+        a.semilogy(n, lam, "C1")
+    a.set_title("λ"); a.set_ylabel("λ"); a.set_xlabel("step")
+    a = ax[1, 1]
+    if s1 is None:
+        a.text(0.5, 0.5, "s non salvate in questa campagna", ha="center", transform=a.transAxes)
+    else:
+        a.plot(n, s1, label="s₁"); a.plot(n, s2, label="s₂"); a.legend(fontsize=9)
+    a.set_title("s₁, s₂  (dipendono dal PRODOTTO f·W)"); a.set_xlabel("step")
+    for b in ax.ravel():
+        b.grid(alpha=0.3)
+    fig.suptitle(f"{RESULTS_NAME}\nCh{r['ch']} WP{r['wp']} — {len(J)} steps", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    out = os.path.join(BASE_DIR, RESULTS_NAME, f"training_detail_ch{r['ch']}_wp{r['wp']}.png")
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    return out
 
 
 def main():
@@ -61,7 +104,10 @@ def main():
         loss = h["loss"] if "loss" in h.files and len(h["loss"]) else None
         drop, resid = tail_metrics(loss if loss is not None else J)
         k = max(2, int(len(J) * TAIL))
-        rows.append(dict(ch=ch, wp=wp, n=len(J), J=J, lam=lam, loss=loss, drop=drop, resid=resid,
+        rows.append(dict(ch=ch, wp=wp, n=len(J), J=J, lam=lam, loss=loss,
+                         s1=h["s1"] if "s1" in h.files and len(h["s1"]) else None,
+                         s2=h["s2"] if "s2" in h.files and len(h["s2"]) else None,
+                         drop=drop, resid=resid,
                          lam_drift=(np.nan if lam is None else
                                     100.0 * (lam[-1] - lam[-k]) / abs(lam[-1]))))
     print(f"{RESULTS_NAME}\n{len(rows)} punti, {rows[0]['n']} passi, coda = ultimo {TAIL:.0%}\n")
@@ -106,6 +152,12 @@ def main():
         out = os.path.join(BASE_DIR, RESULTS_NAME, f"training_convergence_ch{ch}.png")
         fig.savefig(out, dpi=110)
         plt.close(fig)
+    for ch, wp in DETAIL:
+        r = next((x for x in rows if (x["ch"], x["wp"]) == (ch, wp)), None)
+        if r is None:
+            print(f"[INFO] DETAIL: ch{ch} wp{wp} non ha una storia salvata")
+        else:
+            print(f"   -> {os.path.relpath(plot_detail(r), BASE_DIR)}")
     print(f"\nfigure -> {RESULTS_NAME}/training_convergence_ch<ch>.png")
     bad = [r for r in rows if not np.isfinite(r["resid"]) or r["resid"] > 0.1]
     print(f"punti con residuo stimato > 0.1% (o senza segno di arresto): {len(bad)}/{len(rows)}"
