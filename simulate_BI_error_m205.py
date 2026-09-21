@@ -75,14 +75,14 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean_hist"
+RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_lam1_hist"
 
 # 1b) COMPARE: MODALITA' CONFRONTO. Altre cartelle da simulare INSIEME a RESULTS_NAME: per ogni
 #     seed gli eventi si generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna
 #     scrive nel proprio CSV. Gli eventi sono identici per costruzione (e' su questo che si regge
 #     l'errore appaiato di Delta BI) e la generazione, ~70% del tempo, si paga una volta sola.
 #     Log, job e copia congelata stanno in RESULTS_NAME. [] = una cartella sola, come prima.
-COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"]
+COMPARE = [] #["m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
