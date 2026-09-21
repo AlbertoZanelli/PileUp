@@ -148,7 +148,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #     suffisso -> da dove viene il RUMORE:
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-TEMPLATE_SOURCE = "fit"       # "fit" | "root" | "sim"
+TEMPLATE_SOURCE = "sim"       # "fit" | "root" | "sim"
 SIM_SOURCE      = "APsimfit10000led"   # tag dell'AP simulato, cioe' il pezzo <tag> in
                                    # m205_AP_sim/ch<ch>/simAP_<tag>_ch<ch>_wp<wp>.npy.
                                    # Prodotto da build_simAP_injected_m205.py:
@@ -164,7 +164,7 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
           "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [83] #[31, 34, 71, 83, 91]
+ONLY_CHANNELS   = [71, 83, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -232,7 +232,7 @@ def sim_folder_tag(tag):
 
 # Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
 # un test non tocca la campagna buona. "" = campagna normale.
-RUN_TAG = ""
+RUN_TAG = "_hist"
 
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                 sim_folder_tag(SIM_SOURCE))
@@ -263,7 +263,7 @@ AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # GB per job
+RAM_GB            = 3         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat

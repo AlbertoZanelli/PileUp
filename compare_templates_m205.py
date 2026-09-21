@@ -44,8 +44,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # (injection)" del paper). Senza "@" si usa MC_GEN.
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
-SETS = ["m205_results_octopus_APsimfit10000led_npsclean",
-        "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
+SETS = ["m205_results_octopus_APsimfit10000led_npsclean_hist",
+        "m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"]
 
 #SETS = ["m205_results_octopus_npsclean@fit",
 #        "m205_results_octopus_fit_npsclean@fit"]
@@ -86,7 +86,7 @@ ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] =
 MC_GEN = "fit"           # "root" | "fit"
 # File del Monte Carlo: quello a seed singolo, oppure quello a piu' seed scritto da
 # simulate_BI_error con N_SEEDS > 1 (serve per l'errore APPAIATO su Delta BI, vedi paired).
-MC_CSV = "BI_mc_error_m205_seeds50.csv"     # | "BI_mc_error_m205.csv" (un seed)
+MC_CSV = "BI_mc_error_m205.csv"     # | "BI_mc_error_m205.csv" (un seed)
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
 # Target CUPID sul pile-up: meta' del budget totale di 1e-4 counts/(keV kg yr).
 # Disegnato in tutti i pannelli che mostrano il BI. None per non disegnarlo.
