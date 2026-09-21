@@ -594,7 +594,8 @@ def compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, s
 
 def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribution, N_sigma=1.28,
                             n_trials=1000, activation_fct=None, pulse_center_ratio=0.5,
-                            f1_init=None, f2_init=None, verbose=True, use_interp=False):
+                            f1_init=None, f2_init=None, verbose=True, use_interp=False,
+                            s_penalty=None, history=None, eta_min=1e-5):
     """
     Wiener-filter version of :func:`optimize_filters`.
 
@@ -645,7 +646,12 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
     f2_param = torch.nn.Parameter(f2_init.to(S.device))
 
     optimizer = torch.optim.Adam([f1_param, f2_param], lr=1e-2)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials, eta_min=1e-5)
+    # eta_min = 1e-2 (cioe' il learning rate iniziale) lascia il passo COSTANTE, come fa
+    # optimize_filters_wiener_lambda: e' quello che serve per confrontare lambda fissa e
+    # lambda addestrabile senza cambiare anche lo schedule. Il default 1e-5 e' il
+    # comportamento storico di questa funzione.
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials,
+                                                           eta_min=eta_min)
     J_values = []
     J = torch.nan
     for step in range(n_trials):
@@ -664,8 +670,22 @@ def optimize_filters_wiener(S, W_unit, w, t, r, nps, signal_amp, ratio_distribut
         J = compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, signal_amp,
                              ratio_distribution, N_sigma=N_sigma,
                              pulse_center_ratio=pulse_center_ratio, use_interp=use_interp)
-        J_values.append(J.item())
-        J.backward()
+        J_values.append(J.item())          # SEMPRE la J fisica, senza penalita'
+        # Stessa penalita' e stessa history della versione con lambda addestrabile, cosi' le
+        # due si possono confrontare riga per riga (vedi s_penalty in
+        # optimize_filters_wiener_lambda).
+        loss = J
+        if s_penalty is not None:
+            var1, var2, _ = compute_vars_wiener(W_unit, S, nps, f1, f2)
+            s1 = var1.clamp_min(0) ** 0.5 / signal_amp
+            s2 = var2.clamp_min(0) ** 0.5 / signal_amp
+            loss = J + s_penalty(s1, s2)
+        if history is not None:
+            history.setdefault("loss", []).append(loss.item())
+            if s_penalty is not None:
+                history.setdefault("s1", []).append(s1.item())
+                history.setdefault("s2", []).append(s2.item())
+        loss.backward()
         optimizer.step()
         scheduler.step()
         if step % 10 == 0 and verbose:
