@@ -1,0 +1,2 @@
+[OK] stimatore M ch 83 wp 13 seed 1234: BI_mc=8.2541e-05  vs m205_results_octopus_APsimfit10000led_npsclean_hist 8.2891e-05  (-0.42%, stessi eventi)
+[OK] m205_results_octopus_APsimfit10000led_npsclean_hist ch 83 wp 13 seed 1234: BI_mc=8.2891e-05 +- 6.3e-07 (analitico 8.1829e-05, rapporto 1.013)

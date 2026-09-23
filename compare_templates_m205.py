@@ -45,7 +45,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
 SETS = ["m205_results_octopus_APsimfit10000led_npsclean_hist",
-        "m205_results_wiener_APsimfit10000led_npsclean_lam1_hist"]
+        "m205_results_likelihood_APsimfit10000led_npsclean"]
 
 #SETS = ["m205_results_octopus_npsclean@fit",
 #        "m205_results_octopus_fit_npsclean@fit"]
