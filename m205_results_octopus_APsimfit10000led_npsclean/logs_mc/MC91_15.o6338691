@@ -1,0 +1,3 @@
+[OK] stimatore M ch 91 wp 15 seed 1234: BI_mc=1.3785e-04  vs m205_results_octopus_APsimfit10000led_npsclean_hist 1.4090e-04  (-2.16%, stessi eventi)
+   distribuzioni -> /mnt/disk1/data/users/azanelli/PileUp/m205_results_octopus_APsimfit10000led_npsclean_hist/BI_mc_psd_ch91_wp15.png
+[OK] m205_results_octopus_APsimfit10000led_npsclean_hist ch 91 wp 15 seed 1234: BI_mc=1.4090e-04 +- 8.0e-07 (analitico 1.3650e-04, rapporto 1.032)

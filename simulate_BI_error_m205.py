@@ -96,7 +96,7 @@ MEAS_NAME   = "000205"
 #      m205_results_octopus_APsimfit10000led_npsclean         -> filtro ottimo
 #      m205_results_wiener_APsimfit10000led_npsclean_swna1    -> Wiener + penalita' su s
 #    RESULTS_NAME decide anche i punti da simulare, il template di M e dove vanno log e job.
-RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_swna1"
+RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean"
 
 # 1b) COMPARE: altre cartelle da simulare INSIEME a RESULTS_NAME. Per ogni seed gli eventi si
 #     generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna scrive nel proprio
@@ -126,7 +126,7 @@ GEN_TEMPLATE = "fit"
 #    Tipico: RESULTS_NAME = cartella Wwna, COMPARE = [cartella OF], LIKELIHOOD = True -> un solo
 #    lancio, tre set sugli stessi impulsi. I CSV delle cartelle di training non cambiano.
 #    Costo: ~1.3 ms per evento (~4 h per job con due cartelle, M e N_SEEDS = 50; walltime 24 h).
-LIKELIHOOD = False
+LIKELIHOOD = True
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali di RESULTS_NAME
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
@@ -140,7 +140,7 @@ CHUNK   = 500               # eventi generati per volta: tutti insieme finirebbe
                             # CAMBIA GLI EVENTI (vedi simulate_psd): uguale in tutte le campagne
                             # che si confrontano.
 SEED    = 1234
-N_SEEDS = 1                 # ripetizioni INDIPENDENTI: il seed SEED + i genera una simulazione
+N_SEEDS = 50                 # ripetizioni INDIPENDENTI: il seed SEED + i genera una simulazione
                             # completa, una riga per seed. Cartelle simulate con gli stessi seed
                             # vedono gli STESSI eventi: il Delta BI seed per seed contiene la
                             # covarianza e la sua dispersione e' l'errore (compare_templates).
