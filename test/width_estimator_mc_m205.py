@@ -2,7 +2,7 @@
 width_estimator_mc_m205.py
 ==========================
 Lo stimatore di LARGHEZZA (vedi test/estimator_headroom_m205.py) sul MONTE CARLO, appaiato con i
-filtri Wwna _hist sugli STESSI eventi:
+filtri Wwna a 500 passi sugli STESSI eventi:
     T = Re<X e^{i w t_OF}, g>/||g||,   g = S (M2/M0 - w^2)
 con t_OF dal massimo della correlazione OF (+-20 campioni) raffinato con una parabola. Lineare
 nei dati a tempo fissato, a norma unitaria: sui singoli media 0 e deviazione standard 1, senza
@@ -25,7 +25,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 import src.analysis as an, src.simulation as sim, src.dataset as ds, utility.functions as fn
 CH, WP, NSIM = int(sys.argv[1]), int(sys.argv[2]), 30000
-WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"
+WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1"
 A = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"]) for r in csv.DictReader(open(glob.glob(f"{WD}/BI_results_*.csv")[0]))}[(CH, WP)]
 full = lambda h: np.concatenate([h, np.conj(h[-2:0:-1]) if np.iscomplexobj(h) else h[-2:0:-1]])
 K, f1, f2 = (full(np.load(f"{WD}/trained_filters/{n}_ch{CH}_wp{WP}.npy")) for n in ("kernel", "f1", "f2"))

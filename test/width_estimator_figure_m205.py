@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os; BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, BASE)
 import src.analysis as an, src.simulation as sim
 CH, WP = 34, 15
-WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"
+WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1"
 A = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"]) for r in csv.DictReader(open(glob.glob(f"{WD}/BI_results_*.csv")[0]))}[(CH, WP)]
 gen = np.load(f"{BASE}/residual_scan_bessel/fits_octopus/bestfit_ch{CH}_wp{WP}.npy")
 nps = np.load(f"{BASE}/m205_NPS_clean/ch{CH}/nps_ch{CH}_wp{WP}.npy")

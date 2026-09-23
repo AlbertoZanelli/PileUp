@@ -299,10 +299,6 @@ VAL_SEED  = 9001      # tenerlo FUORI dall'intervallo SEED ... SEED + N_SEEDS - 
 # La cartella prende il suffisso "_eta<valore>" quando ETA_MIN != 1e-2.
 ETA_MIN = 1e-2
 
-# Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
-# un test non tocca la campagna buona. "" = campagna normale.
-RUN_TAG = "_hist"
-
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                 sim_folder_tag(SIM_SOURCE))
                + ("_R" if USE_R else "")
@@ -311,8 +307,7 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
                + ("" if TRAIN_LAMBDA else "_lam%g" % LAMBDA_VALUE)
                + ("_ph" if PHASE else "")
-               + ("" if ETA_MIN == 1e-2 else "_eta%g" % ETA_MIN)
-               + RUN_TAG)
+               + ("" if ETA_MIN == 1e-2 else "_eta%g" % ETA_MIN))
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -666,7 +661,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             phase = PHASE,
             validate = validate, val_every = VAL_EVERY,
             n_trials = N_TRIALS,
-            use_interp = True,
+            use_interp = False,
             verbose = False,
         )
         lam_opt = float(LAMBDA_VALUE)
@@ -692,7 +687,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
                 validate = validate, val_every = VAL_EVERY,
                 eta_min = ETA_MIN,
                 n_trials = N_TRIALS,
-                use_interp = True,
+                use_interp = False,
                 verbose = False,
             )
     train_s = time.perf_counter() - t_train

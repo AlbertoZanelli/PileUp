@@ -25,7 +25,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"
+RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_swna1"
 TAIL = 0.10              # frazione finale dei passi su cui si misurano calo e deriva
 GRID = (5, 3)
 # Punti per cui fare anche la figura DETTAGLIATA a quattro pannelli (costo, zoom, lambda, s):

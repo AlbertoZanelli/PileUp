@@ -44,8 +44,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # (injection)" del paper). Senza "@" si usa MC_GEN.
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
-SETS = ["m205_results_octopus_APsimfit10000led_npsclean_hist",
-        "m205_results_wiener_APsimfit10000led_npsclean_lam1_hist"]
+SETS = ["m205_results_octopus_APsimfit10000led_npsclean",
+        "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
 
 #SETS = ["m205_results_octopus_npsclean@fit",
 #        "m205_results_octopus_fit_npsclean@fit"]
@@ -132,11 +132,11 @@ def describe(spec):
             break
     else:
         raise SystemExit(f"[ERROR] nome non riconosciuto: {folder}")
-    # RUN_TAG dei lanci di prova (es. "_hist"): sta dopo l'ultimo token noto del nome e non
-    # descrive la campagna. Si stacca subito, altrimenti finisce nel nome del template; resta
-    # pero' nell'etichetta, altrimenti due set diversi si chiamerebbero uguale.
-    ends = [x.end() for x in re.finditer(r"(_npsclean|_R|_(?:sbar|swna)[0-9.eE+-]+)", tag)]
-    tag, run = (tag, "") if not ends else (tag[:max(ends)], tag[max(ends):])
+    # Suffissi del solo training (_lam<v>, _ph, _eta<v>): si staccano subito, altrimenti finiscono
+    # nel nome del template; restano pero' nell'etichetta, altrimenti due set diversi si
+    # chiamerebbero uguale.
+    x = re.search(r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+)+$", tag)
+    tag, run = (tag[:x.start()], x.group(0)) if x else (tag, "")
     m = re.search(r"_(sbar|swna)[0-9.eE+-]+$", tag)
     pen_tag, pen_label = PENALTY.get(m.group(1), ("", "")) if m else ("", "")
     tag = tag[:m.start()] if m else tag

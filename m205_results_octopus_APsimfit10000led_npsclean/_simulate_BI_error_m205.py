@@ -75,15 +75,14 @@ MEAS_NAME   = "000205"
 #      m205_results_wiener_fit                 -> Wiener, template fit
 #      m205_results_wiener_root_R              -> Wiener + R(f), template root
 #      m205_results_wiener_sim_fitinj_R_npsclean -> Wiener + R(f), template simulato, NPS pulita
-RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean"
+RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean_hist"
 
 # 1b) COMPARE: MODALITA' CONFRONTO. Altre cartelle da simulare INSIEME a RESULTS_NAME: per ogni
 #     seed gli eventi si generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna
 #     scrive nel proprio CSV. Gli eventi sono identici per costruzione (e' su questo che si regge
 #     l'errore appaiato di Delta BI) e la generazione, ~70% del tempo, si paga una volta sola.
 #     Log, job e copia congelata stanno in RESULTS_NAME. [] = una cartella sola, come prima.
-COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean",
-           "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
+COMPARE = ["m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi simulati, cioe' cosa consideri la verita'.
 #    "root" -> medianAP di Octopus dal ROOT (la scelta normale: e' l'impulso vero);
@@ -97,8 +96,22 @@ GEN_TEMPLATE = "fit"        # "root" | "fit"
 # NSIM eventi): la sua sorgente e' la NPS, che viene dedotta da RESULTS_NAME insieme al resto.
 
 
+_KNOWN_TOKEN = r"(_npsclean|_R|_(?:sbar|swna)[0-9.eE+-]+)"
+
+
+def split_run_tag(tag):
+    """(tag della campagna, RUN_TAG). Il RUN_TAG e' il suffisso libero dei lanci di prova
+    (es. "_hist", "_conv3000", vedi RUN_TAG nei due programmi di training): sta in fondo, DOPO
+    l'ultimo token noto del nome (_npsclean, _R, _swna<w>, _sbar<s>), e non descrive la
+    campagna. Senza toglierlo finirebbe dentro il tag dell'AP simulato e il template non si
+    troverebbe piu'."""
+    ends = [m.end() for m in re.finditer(_KNOWN_TOKEN, tag)]
+    return (tag, "") if not ends else (tag[:max(ends)], tag[max(ends):])
+
+
 def _parse_results_name(name):
-    """(filter_type, train_template, sim_ap_from, nps_source) dedotti dal nome della cartella."""
+    """(filter_type, train_template, sim_ap_from, nps_source) dedotti dal nome della cartella.
+    Un eventuale RUN_TAG in fondo viene ignorato: non cambia ne' filtri ne' template."""
     if name.startswith("m205_results_octopus"):
         base, tag = "optimum", name[len("m205_results_octopus"):]
     elif name.startswith("m205_results_wiener"):
@@ -110,6 +123,7 @@ def _parse_results_name(name):
     # analysis_BI_m205_wiener_regolarized.py, es. "_sbar0.15" / "_swna1"): e' l'ULTIMO tag
     # aggiunto al nome, e non cambia nulla per il MC -- la penalita' agisce solo in training,
     # il kernel salvato e' quello, e lambda si legge comunque dal CSV. Si toglie e si prosegue.
+    tag, _run = split_run_tag(tag)
     tag = re.sub(r"_(sbar|swna)[0-9.eE+-]+$", "", tag)
     nps = "clean" if tag.endswith("_npsclean") else "octopus"
     tag = tag[:-len("_npsclean")] if nps == "clean" else tag
@@ -166,7 +180,7 @@ CHUNK       = 500           # eventi generati per volta. simulate_frequency_puls
                             # veloce (cache) fino a ~500. CAMBIA GLI EVENTI (vedi simulate_psd):
                             # stesso valore in tutte le campagne che si confrontano.
 SEED        = 1234
-N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC: il seed SEED + i genera UNA
+N_SEEDS     = 1            # ripetizioni INDIPENDENTI del MC: il seed SEED + i genera UNA
                             # simulazione completa da NSIM eventi per popolazione, una riga per
                             # seed (colonna `seed`). Servono all'errore di Delta BI: due cartelle
                             # girate con gli stessi seed vedono gli STESSI eventi, quindi Delta BI
@@ -176,7 +190,8 @@ N_SEEDS     = 50            # ripetizioni INDIPENDENTI del MC: il seed SEED + i 
 # Un seed solo -> il CSV di sempre; piu' seed -> un CSV A PARTE, col numero di seed nel nome, cosi'
 # le due modalita' non si mescolano. In entrambi ogni riga ha la colonna `seed`.
 OUT_NAME    = "BI_mc_error_m205.csv" if N_SEEDS == 1 else f"BI_mc_error_m205_seeds{N_SEEDS}.csv"
-FOLDERS     = [folder_info(n) for n in [RESULTS_NAME] + list(COMPARE)]
+# senza doppioni: RESULTS_NAME ripetuto in COMPARE si simula una volta sola
+FOLDERS     = [folder_info(n) for n in dict.fromkeys([RESULTS_NAME] + list(COMPARE))]
 # la NPS GENERA gli eventi: con NPS diverse le cartelle non vedrebbero gli stessi eventi
 if len({f["nps"] for f in FOLDERS}) > 1:
     raise SystemExit("[ERROR] COMPARE: le cartelle usano NPS diverse, gli eventi non sarebbero gli stessi")

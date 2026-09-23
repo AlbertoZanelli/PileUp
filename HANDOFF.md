@@ -41,6 +41,32 @@ better discriminant than the paper's ratio of maxima of two band filters (called
   `compare_templates_m205.py` like any other set (paired ΔBI with common seeds). The program
   was cleaned and commented (function map at the top); outputs verified identical to all digits.
 
+**2026-09-24 — OF back to the author's ORIGINAL code; `_hist` gone.**
+- The OF path of `src/analysis.py` (`compute_vars`, `compute_sigma_ratio`, `compute_mu_sigma`,
+  `compute_A`, `compute_J`, `optimize_filters`) is now the author's code
+  (`~/Desktop/Tesi_Erasmus/analysis.py`) VERBATIM: Adam lr 1e-2 constant, no scheduler, |f|,
+  uniform init, plain max over the whole window, cut at 1, no pulse_center_ratio/use_interp,
+  returns numpy. ONE deviation, chosen by the user: no `/2` in compute_vars and no `*2` in
+  compute_sigma_ratio (the original's sigma_Y is sqrt(2) larger; ours is the MC-validated one).
+  Verified: with those two lines swapped in, the original gives the SAME J and filters bit for
+  bit over 40 steps.
+- The Wiener path keeps its own machinery: `_pileup_peaks` (the old mu code, use_interp
+  supported), its own sigma line and its own cut at `muY[0,0]` (needed for PHASE). Verified
+  bit for bit against the previous commit (compute_J_wiener with/without interp, 15 steps of
+  optimize_filters_wiener_lambda). Both training programs call with `use_interp = False`.
+- `_hist` removed. Old 300-step OF folder -> `scarti/`; `..._octopus_..._npsclean_hist` ->
+  `m205_results_octopus_APsimfit10000led_npsclean`, `..._swna1_hist` ->
+  `m205_results_wiener_APsimfit10000led_npsclean_swna1` (inner BI_results CSV renamed too; logs
+  and frozen script copies inside still say _hist, historical). 500 steps is the standard.
+  RUN_TAG removed from both training programs; the parsers of simulate/compare now strip only
+  the training-only suffixes `_lam<v>`, `_ph`, `_eta<v>` (constant `TRAIN_ONLY` in simulate).
+  **Wherever older sections below say `_hist`, read the un-suffixed name.**
+- CAREFUL: with no RUN_TAG a new training goes INTO these folders: rows appended to the
+  results CSV and filters overwritten. Move the old folder to `scarti/` (or RESET_CSV = True)
+  before retraining. On the server the same renames must be done (or pulled via git).
+- Old test scripts from the first commit (`test/WP_test.py`, `grid_size_test.py`, ...) pass
+  `use_interp`/`full_output` to compute_J/optimize_filters and no longer run; not used.
+
 **What worked (this round).** Measuring the headroom BEFORE designing an estimator; one-factor-
 at-a-time ablations with the same init and paired MC events; two independent MC samples (choose
 on one, measure on the other); reproducing the campaign CSV to all digits before trusting a new
@@ -53,8 +79,8 @@ the BI is an AVERAGE — use the mixture, i.e. M).
 
 **Next steps, in order.**
 1. **The thesis numbers for M**: on the server, `simulate_BI_error_m205.py` with
-   `RESULTS_NAME = m205_results_wiener_APsimfit10000led_npsclean_swna1_hist`,
-   `COMPARE = [m205_results_octopus_APsimfit10000led_npsclean_hist]`, `LIKELIHOOD = True`,
+   `RESULTS_NAME = m205_results_wiener_APsimfit10000led_npsclean_swna1`,
+   `COMPARE = [m205_results_octopus_APsimfit10000led_npsclean]`, `LIKELIHOOD = True`,
    `N_SEEDS = 50` (~4 h per job, 75 jobs). Then `compare_templates_m205.py` with
    SETS = [Wwna, OF, `m205_results_likelihood_APsimfit10000led_npsclean`],
    `MC_CSV = "BI_mc_error_m205_seeds50.csv"`. Needs `git pull` on the server (src/pileup_likelihood.py).
@@ -289,7 +315,7 @@ ch34 wp15.
   the filters; `run_pair(..., likelihood=None)` passes −M (pile-up in the LOW tail, like Y) so
   `bi_from` computes cut, BI and σ for both; with `likelihood` it returns (folder results, M
   result), without it the old list. `append_row_to_csv` takes `fieldnames`.
-  **Typical run**: RESULTS_NAME = Wwna `_swna1_hist`, COMPARE = [OF `_hist`], LIKELIHOOD = True,
+  **Typical run**: RESULTS_NAME = Wwna `_swna1`, COMPARE = [OF `_npsclean`], LIKELIHOOD = True,
   N_SEEDS = 50 → one launch, three sets on the same pulses. Then in compare_templates:
   SETS = [Wwna, OF, `m205_results_likelihood_APsimfit10000led_npsclean`], MC_CSV = the `_seeds50`
   file. Verified end to end on ch31 wp7 (seed 1234, 50 000 events, compare mode): Wwna 6.760484e-5
