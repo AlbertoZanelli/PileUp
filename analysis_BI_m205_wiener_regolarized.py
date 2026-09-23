@@ -288,6 +288,17 @@ VAL_NSIM  = 2000      # eventi per popolazione (singoli e pile-up)
 # leakage: piccolo (il finale e' la mediana su 50 semi) ma gratuito da evitare.
 VAL_SEED  = 9001      # tenerlo FUORI dall'intervallo SEED ... SEED + N_SEEDS - 1
 
+# ── Schedule del learning rate ───────────────────────────────────────────────────────
+# Coseno da 1e-2 fino a ETA_MIN in N_TRIALS passi, per TUTTI i parametri (filtri e lambda).
+#   1e-2 -> lr COSTANTE: il comportamento storico di questo programma.
+#   1e-5 -> lr che decade a ~0: lo schedule di analyse_BI_m205.py (filtro ottimo).
+# PERCHE' CONTA: a parita' di passi i due schedule NON sono lo stesso training. Misurato su ch31
+# wp7 (test/ablation_of_vs_wiener_m205.py): l'OF con lr costante batte l'OF con lr che decade
+# dell'1.4% sul BI Monte Carlo, cioe' quasi tutto il vantaggio che il Wwna mostrava sull'OF.
+# Per confrontare con le campagne OF esistenti a parita' di training: ETA_MIN = 1e-5.
+# La cartella prende il suffisso "_eta<valore>" quando ETA_MIN != 1e-2.
+ETA_MIN = 1e-2
+
 # Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
 # un test non tocca la campagna buona. "" = campagna normale.
 RUN_TAG = "_hist"
@@ -300,6 +311,7 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
                + ("" if TRAIN_LAMBDA else "_lam%g" % LAMBDA_VALUE)
                + ("_ph" if PHASE else "")
+               + ("" if ETA_MIN == 1e-2 else "_eta%g" % ETA_MIN)
                + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -650,7 +662,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             f2_init = None,
             s_penalty = make_s_penalty(),
             history = hist,
-            eta_min = 1e-2,
+            eta_min = ETA_MIN,
             phase = PHASE,
             validate = validate, val_every = VAL_EVERY,
             n_trials = N_TRIALS,
@@ -678,6 +690,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
                 s_penalty = make_s_penalty(),
                 history = hist,
                 validate = validate, val_every = VAL_EVERY,
+                eta_min = ETA_MIN,
                 n_trials = N_TRIALS,
                 use_interp = True,
                 verbose = False,

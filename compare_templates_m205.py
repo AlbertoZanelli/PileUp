@@ -110,7 +110,7 @@ SAMPLING_RATE = 10_000
 WINDOW        = 10_000
 
 # Nomi lunghi per la legenda, a partire dal tag corto del filtro.
-FILTER_LABEL = {"OF": "optimum filter", "W": "Wiener", "WR": "Wiener x R(f)"}
+FILTER_LABEL = {"OF": "optimum filter", "W": "Wiener", "WR": "Wiener x R(f)", "M": "likelihood ratio M"}
 # suffisso della cartella -> (pezzo del tag corto, pezzo dell'etichetta). Il suffisso e'
 # quello scritto da S_PENALTY in analysis_BI_m205_wiener_regolarized.py: "_swna<w>", "_sbar<s>".
 PENALTY = {"swna": ("wna", " + s-penalty"), "sbar": ("sbar", " + s-barrier")}
@@ -125,7 +125,8 @@ def describe(spec):
     dal nome; quella di Octopus si vede, perche' e' l'eccezione."""
     folder, _, gen = spec.partition("@")
     gen = gen or MC_GEN
-    for prefix, filt in (("m205_results_octopus", "OF"), ("m205_results_wiener", "W")):
+    for prefix, filt in (("m205_results_octopus", "OF"), ("m205_results_wiener", "W"),
+                         ("m205_results_likelihood", "M")):
         if folder.startswith(prefix):
             tag = folder[len(prefix):]
             break
