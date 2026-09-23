@@ -1,17 +1,75 @@
 # PileUp — Handoff
 
 Thesis work (Milano-Bicocca, CUPID/CROSS) on **pile-up rejection** for the CUPID LMO light
-detectors, run **m205**. The chain is now closed end to end:
-real pulses → **fitted template** → **simulated AP** (`APsimfit10000led`) → training
-(optimum filter vs Wiener with a penalty on s) → **Monte-Carlo BI** with errors → comparison
-plots and thesis slides. The final result is in **FINAL RESULT** below. Older threads are
-summarized at the bottom.
+detectors, run **m205**. Chain: real pulses → **fitted template** → **simulated AP**
+(`APsimfit10000led`) → training (optimum filter vs Wiener with a penalty on s) → **Monte-Carlo BI**
+with errors → comparison plots → thesis.
 
 **NEXT AGENT: use ponytail mode** (the user asked). Laziest thing that works, config-at-top,
-no scaffolding. Discussion in Italian, plot text in English. **The user commits, not you.**
+no scaffolding. Discussion in Italian, plot text in English. **The user commits unless they
+explicitly ask you to** (they did on 2026-09-22 and 09-23: "committa e pusha").
 **Never run training locally** ("prepara tutto e poi lo runno sul server") — EXCEPT short
 diagnostic runs on one point, which the user has explicitly asked for and which are fine.
-When told "non devi fare niente", only read.
+When told "non devi fare niente", only read. The user wants things explained SIMPLY BUT
+PRECISELY, with sources, and every claim checked on the Monte Carlo, never on the analytic BI.
+
+---
+
+## ★ STATE ON 2026-09-23 — START HERE (last commit `a06d0bd`, pushed)
+
+**Goal now.** Put a defensible pile-up-rejection result in the thesis. Two threads converged:
+(1) is the trainable Wiener filter really better than the optimum filter (OF)? (2) is there a
+better discriminant than the paper's ratio of maxima of two band filters (called **Y**)?
+
+**Where it stands.**
+- **Wiener vs OF — answered: same filter family, the campaign gain was the learning-rate
+  schedule** (READ THIS FIRST §6). Trained Wiener filters rewritten as OF filters give the same J
+  on 45/45 points; ablation on ch31 wp7: of the −1.79% campaign gain, −1.38% is the OF's lr
+  decaying to 1e-5 vs the Wiener's constant lr; at EQUAL schedule the Wwna is not better
+  (+0.43 ± 0.21% decaying, −0.06 ± 0.18% constant, two points). λ growing = the optimiser
+  walking back to the OF kernel, driven by the s-penalty; harmless (validation curves).
+- **Headroom — measured** (§7): Y is already within **2–5% of the Neyman–Pearson limit of ANY
+  estimator** on the waveform. 78% of the BI comes from Δt < 0.2 ms, unresolvable at this SNR.
+  More SNR is worth 3–10× any estimator (×√2 SNR → −18…−23% on the limit).
+- **A better discriminant exists: the model-averaged likelihood ratio M** (§8,
+  `src/pileup_likelihood.py`, derivation with sources in `tesi_note/stimatore_verosimiglianza.pdf`).
+  No training. On the CAMPAIGN MC events vs Wwna: **ch31 wp7 −1.96 ± 0.32%, ch91 wp15
+  −1.51 ± 0.23%, ch34 wp15 −0.31 ± 0.23% (n.s.)**; ~40% of the theoretical headroom. It gains
+  where Y saturates (Δt > 0.4 ms: ch31 0.6–0.8 ms survival 1.9% → 0.3%).
+- **`simulate_BI_error_m205.py` runs M as a SET** (`LIKELIHOOD = True`): same events as the
+  folders' filters, own folder `m205_results_likelihood_APsimfit10000led_npsclean`, read by
+  `compare_templates_m205.py` like any other set (paired ΔBI with common seeds). The program
+  was cleaned and commented (function map at the top); outputs verified identical to all digits.
+
+**What worked (this round).** Measuring the headroom BEFORE designing an estimator; one-factor-
+at-a-time ablations with the same init and paired MC events; two independent MC samples (choose
+on one, measure on the other); reproducing the campaign CSV to all digits before trusting a new
+pipeline; making a new algorithm a "set" so the existing comparison tooling just works.
+
+**What didn't work (don't redo).** Free phase in the band filters (§5: MC worse at every stage);
+Y + width estimator T (correlated 0.95–0.99: same information); Y OR T; 2D histogram likelihood
+of (Y, T) (too noisy); the GLRT (max over Δt) alone (+9% worse than Y on ch31: wrong criterion,
+the BI is an AVERAGE — use the mixture, i.e. M).
+
+**Next steps, in order.**
+1. **The thesis numbers for M**: on the server, `simulate_BI_error_m205.py` with
+   `RESULTS_NAME = m205_results_wiener_APsimfit10000led_npsclean_swna1_hist`,
+   `COMPARE = [m205_results_octopus_APsimfit10000led_npsclean_hist]`, `LIKELIHOOD = True`,
+   `N_SEEDS = 50` (~4 h per job, 75 jobs). Then `compare_templates_m205.py` with
+   SETS = [Wwna, OF, `m205_results_likelihood_APsimfit10000led_npsclean`],
+   `MC_CSV = "BI_mc_error_m205_seeds50.csv"`. Needs `git pull` on the server (src/pileup_likelihood.py).
+2. **Robustness of M to the template**: so far M used the simulated AP, built FROM the fit that
+   generates the events (nearly the truth). Test M with a genuinely different template (Octopus's
+   38-pulse medianAP, `root`) before claiming it for real data.
+3. **Fair OF-vs-Wwna at campaign scale** (§6): Wwna with `ETA_MIN = 1e-5` (knob exists, folder
+   suffix `_eta1e-05`) vs the existing OF `_hist`; or OF with constant lr (needs an `eta_min`
+   knob in `optimize_filters`).
+4. Literature check on M before calling it new (the LaTeX note says so explicitly); the
+   citations in `tesi_note/` were written from memory — verify them.
+5. Thesis structure proposed to the user: method → equivalence of the families → where the
+   Wiener gain comes from (ablation) → headroom → M → validity of the analytic model →
+   negative results. Figures: `ablation_ch31_wp7.png`, `ablation_2x2_schedule_vs_model.png`,
+   `tesi_note/fig_M_survival_ch31_wp7.pdf`, `width_estimator_explained.png`.
 
 ---
 
@@ -583,8 +641,8 @@ family (unlike λ, which is gauge), so the blocker is the training metric.
    (phase, >2 bands, likelihood ratio) is blocked behind this.
 3. More than two bands + a multivariate discriminant (linear/quadratic on 3–4 filtered
    amplitudes) instead of the ratio of two — OF stays a special case, so it cannot do worse.
-4. Neyman–Pearson likelihood ratio between "single" and "pile-up", marginalised over amplitude,
-   delay and energy ratio: the only route with a theoretical optimality guarantee.
+4. ~~Neyman–Pearson likelihood ratio~~ **DONE 2026-09-23: the estimator M** (READ THIS FIRST §8,
+   `src/pileup_likelihood.py`), amplitude and time profiled, averaged over (Δt, r).
 5. Reduce the amplitude-estimator bias (discrete argmax → the periodic cost spikes, one every
    ~170 steps, up to +6.6%): a smoother interpolation lowers s and shrinks MC/an.
 
@@ -609,6 +667,9 @@ family (unlike λ, which is gauge), so the blocker is the training metric.
    the parameter to apply it to — the penalty weight is.
 
 ## Why Wiener beats OF on ch31 — optimisation, not family (2026-09-23)
+> **Superseded by READ THIS FIRST §6 (ablation):** the dominant cause is the OF's learning-rate
+> schedule (cosine to 1e-5, i.e. switched off at the end — hence its "plateau"), not λ's
+> trainability. The hypothesis and the "not yet tested" list below are kept for history.
 Equal-step comparison (OF `_hist` vs Wwna `swna1_hist`, both 500 steps, MC seed 1234 × 50 000,
 same events, i.e. PAIRED):
 
