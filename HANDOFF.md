@@ -94,6 +94,165 @@ pay.
 
 ---
 
+**6. WHERE THE WIENER-vs-OF GAIN COMES FROM — causal analysis, 2026-09-23.**
+The effect is real but local: at 500 steps each, same events (`_hist` campaigns, seed 1234,
+50 000 events), ΔBI_mc Wwna vs OF = **ch31 −0.60% (15/15)**, ch91 −0.43% (10/15), ch34/71/83 ≈ 0.
+Three measurements then settle WHY:
+- **Reachability — the family is identical, measured on 45/45 points** (ch31, 34, 91 × 15 WP).
+  Each trained Wiener filter, rewritten as `f_OF = f_W · W/H`, is a valid OF band filter (factor
+  real to Im/Re ≤ 1.2e-7, f_OF ≥ 0) and gives **the same J to ≤ 2e-4** with the OF code. So OF
+  CAN reach every Wiener optimum; the OF actually trained lands +0.7–1.0% (analytic) above it in
+  44/45 points. "Wiener reaches a better filter" is FALSE; "the OF does not get there" is true.
+- **The OF's J is flat at 500 steps because its optimizer is switched off**: `optimize_filters`
+  has cosine annealing to `eta_min = 1e-5`, the Wiener-λ keeps lr 1e-2 constant. Same steps,
+  unequal training — the same kind of artefact as the old 300-vs-500. Hidden confounder.
+- **Ablation, one factor at a time** (`test/ablation_of_vs_wiener_m205.py`, ch31 wp7, 50×50 grid,
+  same init, 30 000 paired MC events, paired bootstrap errors; figure `ablation_ch31_wp7.png`):
+  A OF lr→1e-5 (= campaign) → B constant lr **−1.38 ± 0.35%** → C Wiener kernel λ=1 **+2.24 ± 0.37%**
+  → D λ trainable **−1.63 ± 0.28%** → E + penalty wna **−0.98 ± 0.24%** (= campaign Wwna). Net A→E
+  −1.79 ± 0.38%, of which **−1.38% is the learning-rate schedule**; the Wiener-specific rest
+  (E vs B) is −0.41%, within errors. The endpoints reproduce the campaign gap (−1.9% vs −2.0%
+  analytic). The Wiener kernel at λ=1 is a WORSE parametrization than the OF (s up, MC/an up);
+  trainable λ climbs (6.1, and 29.9 with the penalty) i.e. back towards the OF weighting
+  (W → S*/(λ·NPS) ∝ H): **the growth of λ is the optimizer rediscovering the OF kernel.**
+- **The λ drift, re-measured on the loss actually minimised (J + penalty)**: only 0–8% of λ's
+  log-growth happens after the loss is flat (0.1%). λ does not drift at constant cost; it grows
+  while the PENALTY term is still being reduced at almost constant J (penalty = 0.4–2% of the
+  loss; highest on ch31). The older statement below ("J plateaus by ~150, λ does NOT settle") was
+  measured on J alone and is the signature of the penalty, not a gauge drift.
+- **Saving bug FIXED**: `optimize_filters_wiener_lambda` returned the kernel of `exp(log_lambda)`
+  AFTER the last optimizer step, i.e. one λ step ahead of the returned f1, f2
+  (mean|f·W·S| = 0.996–0.998 instead of 1, J off by 0.1–0.2%). Now it returns the λ and kernel
+  of the last iteration; verified mean|f·W·S| = 1.0000001. Existing folders keep the old kernel
+  (consistent with their CSV λ, as `simulate_BI_error_m205.py` checks).
+**2×2 {OF, Wwna} × {lr decays to 1e-5, constant lr}** (arm F = Wwna with the OF's schedule, via
+the new `eta_min=` of `optimize_filters_wiener_lambda`; figure `ablation_2x2_schedule_vs_model.png`;
+A, B, E reproduced BIT FOR BIT from the previous run, so the procedure is deterministic):
+
+| contrast | ch31 wp7 | ch34 wp15 (control) |
+|---|---|---|
+| Wwna − OF, decaying lr (F vs A) | +0.37 ± 0.27% | +0.52 ± 0.33% |
+| Wwna − OF, constant lr (E vs B) | −0.41 ± 0.28% | +0.17 ± 0.23% |
+| schedule, OF (B vs A) | −1.38 ± 0.35% | −0.13 ± 0.30% |
+| schedule, Wwna (E vs F) | −2.15 ± 0.39% | −0.48 ± 0.27% |
+| interaction | −0.78 ± 0.36% | −0.35 ± 0.37% |
+
+**At equal schedule the Wwna is not better than the OF**: weighted over the two points +0.43 ±
+0.21% (decaying lr, Wwna slightly WORSE) and −0.06 ± 0.18% (constant lr, nothing). The schedule
+matters where training has not finished (ch31) and hardly at all where it has (ch34). With the
+decaying lr λ stops at 6.2 instead of 29.9 — the decay also stops the λ drift. Also on ch34 the
+OF's s is 0.009 against 0.027–0.032 for the Wwna even WITH the penalty: the OF parametrization is
+intrinsically lower in noise amplification. Caveat: two points, 50×50 grid, one init seed.
+**Consequence for the thesis**: at campaign scale, compare at equal schedule. Two options, both
+now possible: Wwna with `ETA_MIN = 1e-5` (new knob in the Wiener program, folder suffix `_eta1e-05`)
+against the existing OF `_hist`; or OF with constant lr — not yet run at campaign scale. `optimize_filters` still has `eta_min` hardcoded to 1e-5: for the OF-constant option it needs a knob
+(or run the OF through `optimize_filters_wiener` with kernel H, which is provably the same J).
+
+**7. ANOTHER ESTIMATOR? MEASURE THE HEADROOM FIRST — 2026-09-23.** The user asked for a
+discriminant beyond the max of the two filtered signals (reasoning: "the max depends on power, a
+squared modulus, not on phases"). That premise is wrong — the peak `max_t Re[ifft(f·K·X)]` is a
+linear functional WITH phases (a random phase lowers it, measured); only the energy is
+phase-blind. But the conclusion is right for another reason: expanding the pile-up around its
+time centroid, `p = s + ½ r(1−r)Δt² s'' + ⅙ r(1−r)(2r−1)Δt³ s''' + …` — the first order is a pure
+time shift (indistinguishable from a single pulse), the first discriminating term is a SYMMETRIC
+broadening, and asymmetry (the only thing a phase could exploit) enters at third order and
+vanishes at r = ½.
+- **Headroom** (`test/estimator_headroom_m205.py`): for each (Δt, r) of the J grid, the distance of
+  the pile-up from the single-pulse manifold (min over amplitude and time) in noise σ = the
+  Neyman–Pearson limit for ANY test on the waveform at 90% acceptance. Against the MC BI of the
+  Wwna `_hist` filters: **ch34 +1.7%, ch83 +2.6%, ch71 +1.8%, ch91 +4.4%, ch31 ≈ +5%** above the
+  limit. The trained band ratio is already within 2–5% of the best possible estimator.
+- **Width estimator** — `T = Re<X e^{iωt_OF}, g>/‖g‖`, `g = S(M2/M0 − ω²)`: the direction of s''
+  orthogonalized to s (and to s' by symmetry), read at the OF time. Linear, unit variance, no
+  training, no ratio. Analytic BI vs the limit: +1.1% (ch34), +1.6% (83), +1.5% (71), +6.1% (91),
+  ≈ +13% (31). **MC check** (`test/width_estimator_mc_m205.py`, 30 000 paired events): singles
+  T = 0.00 ± 1.00 as designed; ch34 wp15 BI 9.381e-5 vs Wwna 9.368e-5 (**+0.14 ± 0.33%**, MC/an of
+  the width estimator 0.994); ch31 wp7 7.798e-5 vs 6.609e-5 (**+18.0 ± 0.8%**). At high SNR it
+  EQUALS the trained filters with zero training and an exact analytic model; at low SNR only the
+  larger Δt are resolvable, the second-order expansion is not enough, and it loses.
+- **Information beats estimators** (`--snr`): the same limit with SNR ×√2 / ×2 vs today's Wwna:
+  ch31 wp7 −23% / −37%, ch34 wp15 −18% / −32%, ch91 wp15 −22% / −36%, ch71 wp21 −18% / −31%.
+  The best conceivable estimator gains 1–6%; √2 more SNR gains ~20%. Whatever raises the SNR
+  (WP choice, noise, combining independent channels) is worth 3–10× any new discriminant.
+- Remaining estimator idea with real (small) headroom: the two-pulse likelihood-ratio test
+  (GLRT) for the LOW-SNR channels (ch31, ch91: ~4–6% to the limit). Computable per event from the
+  OF correlation y(t) alone plus the noise-metric autocorrelation R(Δt) of the template:
+  max over (t, Δt) of the two-pulse fit minus the one-pulse fit. Upper bound on its gain: the
+  headroom above; in practice less (composite alternative over Δt).
+
+**8. A SECOND DISCRIMINANT THAT WORKS: the model-averaged likelihood ratio M — 2026-09-23.**
+Protocol for everything below: two independent MC samples (seed 1111 chooses the combination,
+seed 2222 measures it), 30 000 events per population, cut at 90% of the measured singles, paired
+bootstrap errors, Y = ratio of maxima with the Wwna `_hist` filters. Points ch31 wp7, ch91 wp15,
+ch34 wp15.
+- **Y + width T: nothing** (best linear −0.8% on ch31, 0 elsewhere). Y and T are correlated
+  0.95–0.99 on the singles' noise: the trained filters ARE the width filter.
+- **Where the headroom is** (ch31): 78% of the BI comes from Δt < 0.2 ms, where Y already sits ON
+  the limit (87.8% vs 87.6% survival, 68.3% vs 68.5%) — unresolvable at this SNR by any estimator.
+  All the headroom is at Δt > 0.2 ms, where Y and T SATURATE: once the pulses separate, the max of
+  the high band locks onto the larger pulse alone and Y stops growing with Δt (≈ max(r, 1−r)).
+- **Y OR two-pulse GLRT Λ** (free amplitudes, Δ ∈ [0.15, 1] ms): ch31 −1.93 ± 0.19%, ch91 −1.13
+  (OR) / −1.64 (linear), ch34 −0.15 / −0.68. Correlation Y–Λ 0.71–0.84: new information.
+- **M = log Σ_{Δt,r} π(Δt,r) exp((L(Δt,r) − L1)/2)**, with L(Δt,r) the matched-filter fit of the
+  composite template S[(1−r) + r e^{−iωΔt}] (amplitude and time profiled, computed from the event's
+  OF correlation y(t) as (1−r)y(t) + r·y(t+Δt)), π = uniform Δt × `pdf_ratio2b(r)`. Neyman–Pearson
+  for an alternative AVERAGED over (Δt, r), i.e. exactly the BI's figure of merit. NO training,
+  NO tuning: only the template and the NPS. **M alone vs Y: ch31 −2.32 ± 0.42%, ch91 −1.75 ± 0.27%,
+  ch34 −0.41 ± 0.31%** (with the simulated-AP template, the one Y is trained on; with the true fit
+  template −2.24 / −1.72 / −0.48 — same, so the gain is not from knowing the truth). Y OR M adds
+  ~0.2% on ch31 only. Theoretical limit vs Y on the same sample: −5.6 / −5.1 / −2.4% — M captures
+  ~40% of it; the limit is per-(Δt, r) clairvoyant and not reachable by one test, so the reachable
+  optimum is somewhere in between.
+- **Confirmed on the CAMPAIGN MC events themselves**: regenerating the seed-1234, 50 000-event MC
+  of `_swna1_hist` reproduces Y's BI_mc of the CSV to all digits (same events), and on those events
+  M vs Y = **ch31 −1.96 ± 0.32%, ch91 −1.51 ± 0.23%, ch34 −0.31 ± 0.23%** — consistent with the two
+  independent samples above. The fit templates are already peak-normalized (max = 1), as the
+  campaign's `template_pulse` assumes.
+- Reproduce: `test/likelihood_estimator_m205.py <ch> <wp> [n]` (~15 min at 30 000 events).
+- **Where M lives now (2026-09-23)**: `src/pileup_likelihood.py`, class `PileupLikelihood(S, nps, w,
+  dt_max)` built once per (channel, WP), `.statistic(pulses)` → M per event. Each block is tagged
+  with the equation number of `tesi_note/stimatore_verosimiglianza.pdf` (the LaTeX derivation, with
+  sources). Self-check: `python src/pileup_likelihood.py` (y(t) = OF correlation within 1e-6 without
+  noise and 3e-3 σ with noise — the only difference is the 1e-6 of weight in the dropped
+  frequencies; noiseless single → M = ln(1/81) ≤ 0; noiseless pile-up → M > 0). Same M as the
+  validated inline version to 6e-13; ~1.3 ms per event (not 6: that estimate included Y).
+- **In the campaign MC, as a SET of its own**: `simulate_BI_error_m205.py`, knob
+  **`LIKELIHOOD = False`**. When True, for every seed the SAME events that go through the filters
+  of RESULTS_NAME and of every COMPARE folder also go through M (built by `make_likelihood` on
+  RESULTS_NAME's TRAINING template), with the cut at 90% of the same seed's singles. M writes into
+  its OWN results folder, `likelihood_dir()` = `m205_results_likelihood_<training template of
+  RESULTS_NAME>[_npsclean]` (e.g. `m205_results_likelihood_APsimfit10000led_npsclean`): the same MC
+  CSV as every folder (same name OUT_NAME, same CSV_FIELDNAMES, filter = "likelihood", one row per
+  seed) plus `BI_results_m205_likelihood_<tag>.csv`, one row per point with vbias/SNR/sigma from
+  RESULTS_NAME and BI = nan (M has no analytic BI). So `compare_templates_m205.py` reads it as any
+  other set (it only had to learn the `m205_results_likelihood` prefix → label "likelihood ratio
+  M"), and with common seeds its ΔBI vs OF/Wwna is PAIRED. The training folders' CSVs are untouched.
+  Mechanics: `simulate_psd(..., stats=())` runs extra per-event statistics on the same pulses after
+  the filters; `run_pair(..., likelihood=None)` passes −M (pile-up in the LOW tail, like Y) so
+  `bi_from` computes cut, BI and σ for both; with `likelihood` it returns (folder results, M
+  result), without it the old list. `append_row_to_csv` takes `fieldnames`.
+  **Typical run**: RESULTS_NAME = Wwna `_swna1_hist`, COMPARE = [OF `_hist`], LIKELIHOOD = True,
+  N_SEEDS = 50 → one launch, three sets on the same pulses. Then in compare_templates:
+  SETS = [Wwna, OF, `m205_results_likelihood_APsimfit10000led_npsclean`], MC_CSV = the `_seeds50`
+  file. Verified end to end on ch31 wp7 (seed 1234, 50 000 events, compare mode): Wwna 6.760484e-5
+  and OF 6.850779e-5 identical to the campaign CSVs, M 6.627696e-5 identical to the independent
+  calculation; compare_templates plots M as a third set, ratio to Wwna 0.980. 281 s per seed per
+  point with two folders + M → ~4 h per job at 50 seeds (walltime 24 h).
+  Checks: `python src/pileup_likelihood.py`; `test/check_likelihood_in_mc_m205.py` (~2 min: folder
+  PSDs identical bit for bit with and without M, compare mode unchanged, M accepts exactly 90% of
+  singles). `src/pileup_likelihood.py` must be on the server (git) for the jobs to import it.
+- **Templates used so far**: events always generated from the FIT; Y's filters and M both use the
+  simulated AP `APsimfit10000led` (built from the fit, so very close to it). The first M test used
+  the fit itself (same result); the theoretical limit and the width estimator T used the fit.
+  NOT yet tested: M with a template really different from the truth (e.g. Octopus's 38-pulse
+  medianAP, `root`).
+- **To make it a thesis number**: one seed pair and three points are not a campaign. Next step:
+  add M as a second discriminant in `simulate_BI_error_m205.py` (it needs only S, NPS and the event
+  spectrum; ~6 ms per event single-thread → run on the cluster) and compare Y vs M with the 50-seed
+  paired MC on all channels and WPs.
+
+---
+
 ## Environment (IMPORTANT)
 - **Project root**: `~/Desktop/Tesi_Erasmus/PileUp` (git repo; `.root` data gitignored but
   PRESENT locally in `Processed/`). Server copy: `/data/users/azanelli/PileUp`.
@@ -448,6 +607,42 @@ family (unlike λ, which is gauge), so the blocker is the training metric.
 9. The L-curve for the penalty weight `w` (J vs s₁²+s₂² as w scans 0…10, pick the corner) would
    replace "we chose w = 1" with a criterion that has a name (Hansen) and a reference. λ is NOT
    the parameter to apply it to — the penalty weight is.
+
+## Why Wiener beats OF on ch31 — optimisation, not family (2026-09-23)
+Equal-step comparison (OF `_hist` vs Wwna `swna1_hist`, both 500 steps, MC seed 1234 × 50 000,
+same events, i.e. PAIRED):
+
+| ch | ΔBI analytic | ΔBI MC | W better on MC | MC/an OF | MC/an Wwna |
+|---|---|---|---|---|---|
+| 31 | −1.02% | **−0.60%** | **15/15** | 1.031 | 1.035 |
+| 34 | −0.96% | +0.01% | 7/15 | 1.009 | 1.019 |
+| 71 | −0.71% | −0.05% | 8/15 | 1.017 | 1.023 |
+| 83 | −0.75% | −0.03% | 9/15 | 1.015 | 1.023 |
+| 91 | −0.70% | −0.43% | 10/15 | 1.032 | 1.037 |
+
+- **Exact identity** that organises the whole comparison, with ρ = BI_MC/BI_an:
+  `BI_MC^W / BI_MC^OF = (J^W / J^OF) · (ρ^W / ρ^OF)`. First factor = what the OPTIMISER found
+  (≈ 0.99 on every channel); second = how much MORE optimistic the analytic model is for Wiener
+  (≥ 1, channel dependent). ch31: 0.990 × 1.004 → −0.6% survives. ch34: 0.990 × 1.010 → 0.
+- **Reachability, measured** (`test/check_family_reach_m205.py`): mapping the trained Wiener
+  filters into OF coordinates (f_OF = f_W·W/H, real positive) and evaluating with the OF code
+  gives the same J to **≤ 6e-6 on 15/15 WPs of ch31**. The Wiener solution IS a point of the OF
+  family; the OF-trained filters sit 0.4–1.9% higher in J.
+- **The OF is not slow, it is stuck**: residual descent over the last 100 steps is 0.01–0.05%
+  on every channel for OF (a plateau), while Wwna is still descending on ch31 (0.54%) and ch91
+  (0.11%). So the gap is not "OF needs more steps" — at that rate it would not close.
+- Consistent with the ch34 fixed-λ runs (READ THIS FIRST §4): λ = 1 fixed is WORSE than OF on the
+  MC (+0.5/+0.6%), λ trainable ≈ OF. The working hypothesis: a trainable λ is a ONE-parameter
+  global reshaping of the kernel that moves the whole spectrum at once (Adam, lr_λ = 1e-1 = 10×
+  the filters'), letting the optimiser leave a basin the bin-by-bin f cannot leave. It is a
+  better-conditioned parametrisation of the SAME family, not a larger family.
+- **Not yet tested, needed to close the causal chain for the thesis** (one channel, ch31, server):
+  (a) Wwna with λ FIXED (`TRAIN_LAMBDA = False`, `LAMBDA_VALUE = 1`, penalty on): if the −0.6%
+  disappears, the gain is λ's trainability; (b) OF initialised AT the Wiener λ=1 shape
+  (f_init ∝ W/H): separates the initial point from the parametrisation of the updates.
+- Limitation: one training per point (random init). swna1 vs swna1_hist (same config, two
+  inits) differ by 0.00% in median but up to 2.7% on single points — comparable to the per-WP
+  gaps; the 15/15 sign on ch31 is what makes it robust, ch91's 10/15 is not.
 
 ## Validation curve during training — λ growing is NOT costing anything (2026-09-21)
 The worry: with a trainable λ (ch34 and friends) λ climbs by a lot while J stays nearly flat —

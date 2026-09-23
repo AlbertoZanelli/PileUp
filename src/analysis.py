@@ -856,7 +856,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
                                    f1_init=None, f2_init=None, lambda_init=1.0, lr_lambda=None,
                                    use_R=False, N_events=None, beta_R=2.0, eps_R=1e-12,
                                    s_penalty=None, history=None, validate=None, val_every=25,
-                                   verbose=True, use_interp=False):
+                                   eta_min=1e-2, verbose=True, use_interp=False):
     """
     Wiener filter optimization with a trainable noise-modulation factor lambda.
 
@@ -915,6 +915,14 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
             gauge, see the note above), so a validation curve is the only way to tell whether
             the early, small-lambda points are actually better than where the optimizer ends up.
         val_every (int, optional): Steps between validation calls. Defaults to 25.
+        eta_min (float, optional): Floor of the cosine learning-rate schedule, shared by ALL
+            parameter groups (band filters AND log-lambda). The default 1e-2 equals the filters'
+            initial lr, so their lr stays CONSTANT (and lambda's stops at 1e-2): the historical
+            behaviour. 1e-5 is the schedule of :func:`optimize_filters` (the optimum filter),
+            where the lr decays to ~0 by the last step -- needed to compare the two at EQUAL
+            training, since the constant schedule alone was measured to be worth -1.4 % of BI_mc
+            on ch31 wp7 (test/ablation_of_vs_wiener_m205.py). With 1e-5 lambda's lr decays too,
+            which also stops the late drift of lambda.
         verbose (bool, optional): Whether to print progress. Defaults to True.
         use_interp (bool, optional): Whether to interpolate the peak. Defaults to False.
 
@@ -968,7 +976,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     else:
         log_lambda.requires_grad_(False)
     optimizer = torch.optim.Adam(groups)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials, eta_min=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_trials, eta_min=eta_min)
     J_values = []
     lambda_values = []
     J = torch.nan
@@ -1020,11 +1028,15 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
         if step % 10 == 0 and verbose:
             print(f"Step {step}: J = {J.item():.6f}  lambda = {lam.item():.4f}"
                   + ("" if s_penalty is None else f"  loss = {loss.item():.6f}"))
-    lam = torch.exp(log_lambda).detach()
+    # lambda e kernel dell'ULTIMO passo, cioe' quelli con cui sono stati calcolati e normalizzati
+    # f1, f2. Prima si restituivano kernel(exp(log_lambda)) DOPO l'ultimo optimizer.step(): un
+    # passo di lambda piu' avanti dei filtri, quindi mean(|f W S|) = 0.996-0.998 invece di 1 e J
+    # dello 0.1-0.2% diversa da quella di training (misurato sulle 75 coppie di _swna1_hist).
+    lam = lam.detach()
     print(f"Final: J = {J.item():.6f}  lambda = {lam.item():.4f}")
     f1 = f1.detach()
     f2 = f2.detach()
-    W_unit = kernel(lam).detach()
+    W_unit = W_unit.detach()
     return f1, f2, lam.item(), W_unit, J_values, lambda_values
 
 

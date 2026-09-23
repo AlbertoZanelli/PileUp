@@ -62,7 +62,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 # MODALITA': da dove viene il TEMPLATE, e quali canali elaborare
 # ═════════════════════════════════════════════════════════════════════════════
 # TEMPLATE_SOURCE = "root" -> medianAP di Octopus dal file ROOT (comportamento originale).
-# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da simulate_BI_error_m205.py --make-ap
+# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da build_simAP_injected_m205.py
 #   (m205_AP_sim/ch<ch>/simAP_ch<ch>_wp<wp>.npy): stessa forma dell'AP vero ma con una
 #   REALIZZAZIONE DIVERSA del rumore di template. Addestrando qui e valutando su eventi generati
 #   dall'AP vero si rompe l'auto-consistenza (cfr. paper, sez. 4.5).
