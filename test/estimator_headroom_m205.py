@@ -19,7 +19,7 @@ Per ogni (dt, r) della griglia del J (stessa griglia, stessa distribuzione di r)
 BI = K * mean( Phi(z_90 - d) * rd ), come J. Metrica <a,b> = sum Re(a conj b)/nps: quella in cui
 sigma_OF = 1/sqrt(sum|S|^2/nps), verificata contro il MC. Template = fit (la verita' del MC).
 
-Misurato (2026-09-23), rispetto al BI Monte Carlo dei filtri Wwna _hist:
+Misurato (2026-09-23), rispetto al BI Monte Carlo dei filtri Wwna a 500 passi:
     ch  SNR_OF   Wwna sopra il limite   larghezza sopra il limite
     34   100        +1.7 %                   +1.1 %
     83    67        +2.6 %                   +1.6 %
@@ -53,7 +53,7 @@ def rows(d):
 def mc(d):
     return {(int(r["channel"]), int(r["wp"])): float(r["BI_mc"]) for r in csv.DictReader(open(f"{BASE}/{d}/BI_mc_error_m205.csv"))
             if r["gen"] == "fit" and r["seed"] == "1234"}
-W_ = "m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"; O_ = "m205_results_octopus_APsimfit10000led_npsclean_hist"
+W_ = "m205_results_wiener_APsimfit10000led_npsclean_swna1"; O_ = "m205_results_octopus_APsimfit10000led_npsclean"
 amp, mcW, mcO = rows(W_), mc(W_), mc(O_)
 
 def point(ch, wp, scale=1.0):

@@ -173,6 +173,9 @@ def compute_vars(S2_over_nps, f1, f2):
 
     abs_f1 = f1.abs()
     abs_f2 = f2.abs()
+    # UNICA differenza dall'originale dell'autore: niente "/ 2" qui e niente "* 2" in
+    # compute_sigma_ratio. Nell'originale i due fattori danno sigma_Y sqrt(2) volte piu' grande;
+    # questa e' la sigma validata sul Monte Carlo (MC/an ~ 1.01 con l'NPS clean).
     num1 = torch.sum(abs_f1 ** 2 * absS2_over_nps)
     num2 = torch.sum(abs_f2 ** 2 * absS2_over_nps)
     cross = torch.sum((f1 * torch.conj(f2)) * absS2_over_nps)
@@ -185,21 +188,8 @@ def compute_vars(S2_over_nps, f1, f2):
 
 
 def compute_sigma_ratio(mu1, mu2, var1, var2, cov12):
-    """
-        Computes the standard deviation (sigma) of the ratio of two variables.
-
-        Args:
-            mu1 (array-like, torch.Tensor, or float): Mean value of the numerator variable.
-            mu2 (array-like, torch.Tensor, or float): Mean value of the denominator variable.
-            var1 (array-like, torch.Tensor, or float): Variance of the numerator variable.
-            var2 (array-like, torch.Tensor, or float): Variance of the denominator variable.
-            cov12 (array-like, torch.Tensor, or float): Covariance between the numerator and denominator variables.
-
-        Returns:
-            array-like, torch.Tensor, or float: The computed standard deviation of the ratio.
-    """
-    varY = var1 / mu2 ** 2 + (mu1 ** 2) * var2 / mu2 ** 4 - 2 * mu1 * cov12 / mu2 ** 3
-    return varY**0.5
+    varY = var1 / mu2 ** 2 + (mu1 ** 2) * var2 / mu2 ** 4 - 2 * mu1 * cov12.real / mu2 ** 3
+    return torch.sqrt(varY).real  # originale: * 2 (vedi compute_vars)
 
 
 def compute_sigma_ratio_order4(mu1, mu2, var1, var2, cov12):
@@ -243,88 +233,37 @@ def compute_sigma_ratio_order4(mu1, mu2, var1, var2, cov12):
     return var_R**0.5
 
 
-def compute_mu_sigma(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, pulse_center_ratio=0.5,
-                     return_all=False, order=2, use_interp=False,
-                     jitter_max=20, interpolation_range=5):
+def compute_mu_sigma(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, return_all=False):
     """
-        Computes the mean (mu) and standard deviation (sigma) of the ratio of two signals
-        after applying filters and alignment.
+    Computes the mean (mu) and standard deviation (sigma) for the given filters and signal.
 
-        Args:
-            f1 (torch.Tensor): First filter tensor.
-            f2 (torch.Tensor): Second filter tensor.
-            S_H_delayed (torch.Tensor): Weighted signal delayed tensor.
-            r (torch.Tensor): Ratio tensor for pileup contributions.
-            S_H (torch.Tensor): Weighted signal tensor.
-            S2_over_nps (torch.Tensor): Normalized spectrum tensor.
-            signal_amp (float): Amplitude of the signal.
-            pulse_center_ratio (float, optional): Ratio to determine the pulse center. Defaults to 0.5.
-            return_all (bool, optional): Whether to return all intermediate results. Defaults to False.
-            order (int, optional): Order of the variance computation (2 or 4). Defaults to 2.
-            jitter_max (int, optional): Maximum jitter for peak search. Defaults to 20.
-            interpolation_range (int, optional): Range for interpolation around the maximum. Defaults to 5.
+    Args:
+        f1 (torch.Tensor): First filter tensor.
+        f2 (torch.Tensor): Second filter tensor.
+        S_H_delayed (torch.Tensor): Weighted signal delayed tensor.
+        r (torch.Tensor): Ratio tensor.
+        S_H (torch.Tensor): Weighted signal tensor.
+        S2_over_nps (torch.Tensor): Normalized spectrum tensor.
+        signal_amp (float): Signal amplitude.
+        return_all (bool, optional): If True, returns additional intermediate values. Defaults to False.
 
-        Returns:
-            tuple: If `return_all` is False, returns:
-                - muY (torch.Tensor): Mean of the ratio of the two signals.
-                - sigmaY (torch.Tensor): Standard deviation of the ratio.
-            If `return_all` is True, returns:
-                - muY (torch.Tensor): Mean of the ratio of the two signals.
-                - sigmaY (torch.Tensor): Standard deviation of the ratio.
-                - mu1 (torch.Tensor): Mean of the first signal.
-                - mu2 (torch.Tensor): Mean of the second signal.
-                - var1 (torch.Tensor): Variance of the first signal.
-                - var2 (torch.Tensor): Variance of the second signal.
-                - cov12 (torch.Tensor): Covariance between the two signals.
+    Returns:
+        tuple:
+            - muY (torch.Tensor): Ratio of the maximum amplitudes of the two signals.
+            - sigmaY (torch.Tensor): Standard deviation of the ratio.
+            - (Optional) Additional intermediate values if `return_all` is True.
     """
-    win_length = S_H.shape[-1]
-    target_index = int(win_length * pulse_center_ratio)
-    fine_x = torch.arange(-interpolation_range, interpolation_range + 1, 0.05, device = f1.device)
-    offs = torch.arange(-interpolation_range, interpolation_range + 1, device = f1.device)
-    lo = target_index - jitter_max
-    hi = target_index + jitter_max
-
-    s_H_1 = torch.fft.ifft(S_H * f1, dim = -1).real
+    s_H_1 = torch.fft.ifft(S_H * f1).real
     s_H_delayed_1 = torch.fft.ifft(S_H_delayed * f1, dim = -1).real
-
-    s_H_2 = torch.fft.ifft(S_H * f2, dim = -1).real
+    s_pileup_1 = (1-r[:, None, None]) * s_H_1 + r[:, None, None] * s_H_delayed_1[None, :, :]
+    mu1 = torch.max(s_pileup_1.real, dim = -1).values
+    s_H_2 = torch.fft.ifft(S_H * f2).real
     s_H_delayed_2 = torch.fft.ifft(S_H_delayed * f2, dim = -1).real
-    s_pileup_1 = (1 - r[:, None, None]) * s_H_1 + r[:, None, None] * s_H_delayed_1[None, :, :]
-
-    s_pileup_2 = (1 - r[:, None, None]) * s_H_2 + r[:, None, None] * s_H_delayed_2[None, :, :]
-
-    if use_interp:
-        s_pileup_1 = torch.roll(s_pileup_1.real, shifts = target_index, dims = -1)
-        s_pileup_2 = torch.roll(s_pileup_2.real, shifts = target_index, dims = -1)
-
-        sub1 = s_pileup_1[..., lo:hi]
-        sub2 = s_pileup_2[..., lo:hi]
-        max_idx1 = sub1.argmax(dim = -1) + lo
-        max_idx2 = sub2.argmax(dim = -1) + lo
-
-        idx1 = max_idx1[..., None] + offs
-        idx2 = max_idx2[..., None] + offs
-
-        y1 = s_pileup_1.gather(-1, idx1)
-        y2 = s_pileup_2.gather(-1, idx2)
-
-        interp1 = cubic_interp1d_scipy(y1, fine_x,offs)
-        interp2 = cubic_interp1d_scipy(y2, fine_x,offs)
-
-        mu1 = interp1.max(dim = -1).values
-        mu2 = interp2.max(dim = -1).values
-    else:
-        mu1 = s_pileup_1.real.max(dim = -1).values
-        mu2 = s_pileup_2.real.max(dim = -1).values
+    s_pileup_2 = (1-r[:, None, None]) * s_H_2 + r[:, None, None] * s_H_delayed_2[None, :, :]
+    mu2 = torch.max(s_pileup_2.real, dim = -1).values
     muY = mu1 / mu2
     var1, var2, cov12 = compute_vars(S2_over_nps, f1, f2)
-    if order == 4:
-        # compute_sigma_ratio_order4 vuole le VARIANZE (si calcola sigma = var**0.5 da solo):
-        # passargli gia' le deviazioni standard faceva una radice di troppo e mandava rho e il
-        # termine O(sigma^4) fuori scala (misurato: sigmaY 132 invece di 0.0128).
-        sigmaY = compute_sigma_ratio_order4(mu1*signal_amp, mu2*signal_amp, var1, var2, cov12)
-    else:
-        sigmaY = compute_sigma_ratio(mu1*signal_amp, mu2*signal_amp, var1, var2, cov12)
+    sigmaY = compute_sigma_ratio(mu1, mu2, var1, var2, cov12) / signal_amp
     if return_all:
         return muY, sigmaY, mu1, mu2, var1, var2, cov12
     else:
@@ -343,16 +282,10 @@ def compute_A(muY, sigmaY, N_sigma=1.28):
     Returns:
         torch.Tensor: Computed probability value.
     """
-    # Il taglio sta a N_sigma sigma SOTTO i singoli, e i singoli sono muY[0, 0] (r=0, t=0),
-    # non 1: con f REALE >= 0 la normalizzazione mean(|f W S|) = 1 rende il picco esattamente
-    # 1 e le due scritture coincidono, ma con f COMPLESSA (PHASE) |f W S| != f W S, i singoli
-    # finiscono altrove (misurato 0.833, MC 0.836) e il taglio scritto a 1 stava 7 sigma
-    # sopra di loro: J crollava per un taglio sbagliato, non per il filtro.
-    return 1 - norm.cdf((muY[0, 0] - muY - N_sigma*sigmaY[0, 0]) / sigmaY)
+    return 1 - norm.cdf((1-muY-N_sigma*sigmaY[0, 0]) / sigmaY)
 
 
-def compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distribution,
-              pulse_center_ratio=0.5, N_sigma=1.28, use_interp=False ,full_output=False):
+def compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distribution, N_sigma=1.28):
     """
     Computes the J metric for the given inputs.
 
@@ -365,29 +298,18 @@ def compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distri
         S2_over_nps (torch.Tensor): Normalized spectrum tensor.
         signal_amp (float): Signal amplitude.
         ratio_distribution (torch.Tensor): Ratio distribution tensor.
-        pulse_center_ratio (float, optional): Pulse center ratio. Defaults to 0.5.
         N_sigma (float, optional): Sigma threshold. Defaults to 1.28.
-        full_output (bool, optional): Whether to return full output. Defaults to False.
 
     Returns:
-            torch.Tensor: Computed J metric value if `full_output=False`.
-            tuple: If `full_output=True`, returns a tuple containing:
-                - torch.Tensor: Mean J metric value.
-                - torch.Tensor: Acceptance values.
-                - torch.Tensor: Mean Y values.
-                - torch.Tensor: Sigma Y values.
+        torch.Tensor: Computed J metric.
     """
-    muY, sigmaY = compute_mu_sigma(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp,
-                                   pulse_center_ratio=pulse_center_ratio, use_interp=use_interp)
+    muY, sigmaY = compute_mu_sigma(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp)
     A = compute_A(muY, sigmaY, N_sigma=N_sigma)
-    if full_output:
-        return torch.mean(A*ratio_distribution[:, None]).real, A, muY, sigmaY
     return torch.mean(A*ratio_distribution[:, None]).real
 
 
 def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_sigma = 1.28, n_trials = 1000,
-                    activation_fct=None,
-                     pulse_center_ratio=0.5, f1_init=None, f2_init=None, verbose = True, use_interp = False):
+                     f1_init=None,f2_init=None,verbose = True):
     """
     Optimizes two filters (f1 and f2) to maximize the J metric using gradient-based optimization.
 
@@ -402,10 +324,6 @@ def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_
         ratio_distribution (torch.Tensor): Ratio distribution tensor.
         N_sigma (float, optional): Sigma threshold for the J metric. Defaults to 1.28.
         n_trials (int, optional): Number of optimization steps. Defaults to 1000.
-        pulse_center_ratio (float, optional): Pulse center ratio. Defaults to 0.5.
-        f1_init (torch.Tensor or None, optional): Initial filter f1. Defaults to None.
-        f2_init (torch.Tensor or None, optional): Initial filter f2. Defaults to None.
-        verbose (bool, optional): Whether to print progress. Defaults to True.
 
     Returns:
         tuple:
@@ -417,34 +335,27 @@ def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_
     S_H_delayed, S_H, S2_over_nps = precompute_constants(S, H_unit, w, t, nps)
     # Initialize filter parameters as complex tensors
     n = len(H_unit)
-    activation_fct = torch.nn.Softplus(20,20) if activation_fct is None else activation_fct
-    f1_init = activation_fct(torch.rand(n//2+1, dtype = torch.float)) if f1_init is None else f1_init.clone().abs()
-    f2_init = activation_fct(torch.rand(n//2+1, dtype = torch.float)) if f2_init is None else f2_init.clone().abs()
+    f1_init = torch.rand(n//2+1, dtype = torch.float) if f1_init is None else f1_init
+    f2_init = torch.rand(n//2+1, dtype = torch.float) if f2_init is None else f2_init
     if len(f1_init) > n//2+1:
         f1_init = f1_init[:n//2+1]
     if len(f2_init) > n//2+1:
         f2_init = f2_init[:n//2+1]
-    f1_param = torch.nn.Parameter(f1_init.to(S.device))
-    f2_param = torch.nn.Parameter(f2_init.to(S.device))
+    f1_param = torch.nn.Parameter(f1_init)
+    f2_param = torch.nn.Parameter(f2_init)
 
     # Set up the optimizer
     optimizer = torch.optim.Adam([f1_param, f2_param], lr = 1e-2)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max = n_trials,
-        eta_min = 1e-5
-    )
     J_values = []  # To store J metric values during optimization
-    f1 = activation_fct(f1_param)
-    f2 = activation_fct(f2_param)
+    f1 = torch.abs(f1_param)
+    f2 = torch.abs(f2_param)
     f1 = torch.cat([f1, f1[1:-1].flip(0)])
     f2 = torch.cat([f2, f2[1:-1].flip(0)])
-    J = torch.nan
     for step in range(n_trials):
         optimizer.zero_grad()  # Reset gradients
         # Enforce positivity of the filters
-        f1 = activation_fct(f1_param)
-        f2 = activation_fct(f2_param)
+        f1 = torch.abs(f1_param)
+        f2 = torch.abs(f2_param)
         f1 = torch.cat([f1, f1[1:-1].flip(0)])
         f2 = torch.cat([f2, f2[1:-1].flip(0)])
         # Normalize filters such that mean(|f_i * H * S|) = 1
@@ -453,22 +364,20 @@ def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_
         f1 = f1 / norm1
         f2 = f2 / norm2
         # Compute the J metric
-        J = compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distribution, N_sigma = N_sigma,
-                      pulse_center_ratio=pulse_center_ratio, use_interp=use_interp)
+        J = compute_J(f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp, ratio_distribution, N_sigma = N_sigma)
         J_values.append(J.item())  # Store the current J value
 
         # Backpropagation and update filter parameters
         J.backward()
-
         optimizer.step()
-        scheduler.step()
+
         # Uncomment the following lines to print progress every 100 steps
-        if step % 10 == 0 and verbose:
+        if step % 100 == 0 and verbose:
             print(f"Step {step}: J = {J.item():.6f}")
-    print(f"Final: J = {J.item():.6f}")
+    print(f"Step {step}: J = {J.item():.6f}")
     # Convert optimized filters to numpy arrays
-    f1 = f1.detach()
-    f2 = f2.detach()
+    f1 = np.abs(f1.detach().numpy())
+    f2 = np.abs(f2.detach().numpy())
     return f1, f2, J_values
 
 
@@ -483,6 +392,35 @@ def optimize_filters(S, H_unit, w, t, r, nps, signal_amp, ratio_distribution, N_
 #
 # Use these together with compute_W instead of compute_H.
 # =============================================================================
+
+def _pileup_peaks(f1, f2, S_H_delayed, r, S_H, pulse_center_ratio=0.5, use_interp=False,
+                  jitter_max=20, interpolation_range=5):
+    """Picchi mu1, mu2 dei due segnali filtrati sulla griglia (r, dt), per i filtri Wiener.
+    Con use_interp=False e' il massimo su tutta la finestra, cioe' esattamente il mu del
+    compute_mu_sigma originale; con use_interp=True argmax in +-jitter_max campioni dal
+    centro e interpolazione cubica, come get_PSD_interpole. L'OF usa compute_mu_sigma."""
+    win_length = S_H.shape[-1]
+    target_index = int(win_length * pulse_center_ratio)
+    lo = target_index - jitter_max
+    hi = target_index + jitter_max
+    s_H_1 = torch.fft.ifft(S_H * f1, dim = -1).real
+    s_H_delayed_1 = torch.fft.ifft(S_H_delayed * f1, dim = -1).real
+    s_H_2 = torch.fft.ifft(S_H * f2, dim = -1).real
+    s_H_delayed_2 = torch.fft.ifft(S_H_delayed * f2, dim = -1).real
+    s_pileup_1 = (1 - r[:, None, None]) * s_H_1 + r[:, None, None] * s_H_delayed_1[None, :, :]
+    s_pileup_2 = (1 - r[:, None, None]) * s_H_2 + r[:, None, None] * s_H_delayed_2[None, :, :]
+    if not use_interp:
+        return s_pileup_1.real.max(dim = -1).values, s_pileup_2.real.max(dim = -1).values
+    fine_x = torch.arange(-interpolation_range, interpolation_range + 1, 0.05, device = f1.device)
+    offs = torch.arange(-interpolation_range, interpolation_range + 1, device = f1.device)
+    s_pileup_1 = torch.roll(s_pileup_1.real, shifts = target_index, dims = -1)
+    s_pileup_2 = torch.roll(s_pileup_2.real, shifts = target_index, dims = -1)
+    idx1 = (s_pileup_1[..., lo:hi].argmax(dim = -1) + lo)[..., None] + offs
+    idx2 = (s_pileup_2[..., lo:hi].argmax(dim = -1) + lo)[..., None] + offs
+    mu1 = cubic_interp1d_scipy(s_pileup_1.gather(-1, idx1), fine_x, offs).max(dim = -1).values
+    mu2 = cubic_interp1d_scipy(s_pileup_2.gather(-1, idx2), fine_x, offs).max(dim = -1).values
+    return mu1, mu2
+
 
 def _peak_response(g, jitter_max=20):
     """Picco del segnale filtrato g = f*W*S (dominio delle frequenze), cercato entro
@@ -568,7 +506,7 @@ def compute_mu_sigma_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S,
     """
     Wiener-filter counterpart of :func:`compute_mu_sigma`.
 
-    The signal means (mu1, mu2, muY) are computed by reusing :func:`compute_mu_sigma`
+    The signal means (mu1, mu2, muY) come from :func:`_pileup_peaks`
     (the peak-of-filtered-signal calculation is identical for any transfer function),
     while the ratio resolution ``sigmaY`` is recomputed from the exact Wiener noise
     propagation in :func:`compute_vars_wiener`.
@@ -582,12 +520,11 @@ def compute_mu_sigma_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S,
         tuple: ``(muY, sigmaY)`` or, if ``return_all``, also ``mu1, mu2, var1,
         var2, cov12``.
     """
-    # Signal part is filter-agnostic: reuse the optimal-filter routine (its variance
-    # output is discarded and recomputed below).
-    muY, _, mu1, mu2, _, _, _ = compute_mu_sigma(
-        f1, f2, S_H_delayed, r, S_H, S2_over_nps, signal_amp,
-        pulse_center_ratio=pulse_center_ratio, return_all=True, order=order,
-        use_interp=use_interp, jitter_max=jitter_max, interpolation_range=interpolation_range)
+    # Signal part is filter-agnostic (same peaks for any transfer function).
+    mu1, mu2 = _pileup_peaks(f1, f2, S_H_delayed, r, S_H, pulse_center_ratio=pulse_center_ratio,
+                             use_interp=use_interp, jitter_max=jitter_max,
+                             interpolation_range=interpolation_range)
+    muY = mu1 / mu2
     # Noise propagation for the actual applied Wiener kernel f_i * W_unit.
     var1, var2, cov12 = compute_vars_wiener(W_unit, S, nps, f1, f2)
     if order == 4:
@@ -595,7 +532,10 @@ def compute_mu_sigma_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S,
         sigmaY = compute_sigma_ratio_order4(mu1 * signal_amp, mu2 * signal_amp,
                                             var1, var2, cov12)
     else:
-        sigmaY = compute_sigma_ratio(mu1 * signal_amp, mu2 * signal_amp, var1, var2, cov12)
+        # stessa formula di compute_sigma_ratio, scritta con **0.5 come prima: sqrt() arrotonda il
+        # gradiente in modo diverso e le campagne Wiener non si riprodurrebbero bit per bit.
+        m1, m2 = mu1 * signal_amp, mu2 * signal_amp
+        sigmaY = (var1 / m2 ** 2 + m1 ** 2 * var2 / m2 ** 4 - 2 * m1 * cov12 / m2 ** 3) ** 0.5
     if return_all:
         return muY, sigmaY, mu1, mu2, var1, var2, cov12
     return muY, sigmaY
@@ -611,7 +551,11 @@ def compute_J_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps, s
     muY, sigmaY = compute_mu_sigma_wiener(f1, f2, S_H_delayed, r, S_H, S2_over_nps, W_unit, S, nps,
                                           signal_amp, pulse_center_ratio=pulse_center_ratio,
                                           use_interp=use_interp)
-    A = compute_A(muY, sigmaY, N_sigma=N_sigma)
+    # Taglio a N_sigma sigma SOTTO i singoli, che stanno a muY[0, 0] (r=0, t=0), non a 1 come
+    # nel compute_A originale: con f REALE >= 0 la normalizzazione mean(|f W S|) = 1 rende il
+    # picco 1 e le due scritture coincidono, ma con f COMPLESSA (PHASE) i singoli finiscono
+    # altrove (misurato 0.833, MC 0.836) e un taglio scritto a 1 starebbe 7 sigma sopra di loro.
+    A = 1 - norm.cdf((muY[0, 0] - muY - N_sigma*sigmaY[0, 0]) / sigmaY)
     if full_output:
         return torch.mean(A * ratio_distribution[:, None]).real, A, muY, sigmaY
     return torch.mean(A * ratio_distribution[:, None]).real
@@ -1031,7 +975,7 @@ def optimize_filters_wiener_lambda(S, w, t, r, nps, signal_amp, ratio_distributi
     # lambda e kernel dell'ULTIMO passo, cioe' quelli con cui sono stati calcolati e normalizzati
     # f1, f2. Prima si restituivano kernel(exp(log_lambda)) DOPO l'ultimo optimizer.step(): un
     # passo di lambda piu' avanti dei filtri, quindi mean(|f W S|) = 0.996-0.998 invece di 1 e J
-    # dello 0.1-0.2% diversa da quella di training (misurato sulle 75 coppie di _swna1_hist).
+    # dello 0.1-0.2% diversa da quella di training (misurato sulle 75 coppie di _swna1 a 500 passi).
     lam = lam.detach()
     print(f"Final: J = {J.item():.6f}  lambda = {lam.item():.4f}")
     f1 = f1.detach()

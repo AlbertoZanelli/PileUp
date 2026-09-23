@@ -55,7 +55,7 @@ from utility.double_beta_spectrum import pdf_ratio2b
 CH, WP, GRID, NT, NSIM = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), 500, 30000
 PICK = sys.argv[4].split(",") if len(sys.argv) > 4 else None      # es. "A,B,E,F"; default tutti
 amp = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"]) for r in csv.DictReader(open(
-    f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist/BI_results_m205_wiener_APsimfit10000led_npsclean_swna1_hist.csv"))}[(CH, WP)]
+    f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1/BI_results_m205_wiener_APsimfit10000led_npsclean_swna1.csv"))}[(CH, WP)]
 tpl = np.load(f"{BASE}/m205_AP_sim/ch{CH}/simAP_APsimfit10000led_ch{CH}_wp{WP}.npy")
 gen = np.load(f"{BASE}/residual_scan_bessel/fits_octopus/bestfit_ch{CH}_wp{WP}.npy")
 nps = np.load(f"{BASE}/m205_NPS_clean/ch{CH}/nps_ch{CH}_wp{WP}.npy")

@@ -16,8 +16,8 @@ import simulate_BI_error_m205 as s
 
 CH, WP, SEED = 31, 7, 1234
 s.NSIM = 2000
-s.FOLDERS = [s.folder_info("m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"),
-             s.folder_info("m205_results_octopus_APsimfit10000led_npsclean_hist")]
+s.FOLDERS = [s.folder_info("m205_results_wiener_APsimfit10000led_npsclean_swna1"),
+             s.folder_info("m205_results_octopus_APsimfit10000led_npsclean")]
 rows = [next(r for r in csv.DictReader(open(f["bi_csv"]))
              if int(r["channel"]) == CH and int(r["wp"]) == WP) for f in s.FOLDERS]
 lik = s.make_likelihood(CH, WP)

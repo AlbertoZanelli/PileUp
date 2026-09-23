@@ -17,7 +17,7 @@ Protocollo: due campioni MC indipendenti (seme 1111 = scelta della combinazione 
 seme 2222 = misura), taglio al 90% dei singoli del campione di misura, BI = K * frazione di pile-up
 sotto il taglio, errori da bootstrap APPAIATO sugli eventi.
 
-Misurato (30 000 eventi per popolazione, filtri Wwna _hist, 2026-09-23):
+Misurato (30 000 eventi per popolazione, filtri Wwna a 500 passi, 2026-09-23):
     punto      SNR   M da solo vs Y     Y oppure M vs Y    limite teorico vs Y
     ch31 wp7    20   -2.32 +- 0.42 %    -2.52 +- 0.35 %    -5.6 %
     ch91 wp15   25   -1.75 +- 0.27 %    -1.74 +- 0.27 %    -5.1 %
@@ -41,7 +41,7 @@ from src.pileup_likelihood import PileupLikelihood
 
 CH, WP = int(sys.argv[1]), int(sys.argv[2])
 NSIM = int(sys.argv[3]) if len(sys.argv) > 3 else 30000
-WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist"      # filtri di Y
+WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1"      # filtri di Y
 A = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"])
      for r in csv.DictReader(open(glob.glob(f"{WD}/BI_results_*.csv")[0]))}[(CH, WP)]
 full = lambda h: np.concatenate([h, np.conj(h[-2:0:-1]) if np.iscomplexobj(h) else h[-2:0:-1]])

@@ -50,7 +50,7 @@ MAPPA DELLE FUNZIONI (chi chiama chi)
           |     '-- row_key()                   identita' di una riga (punto, gen, seed)
           '-- plot_pair()                       istogrammi di un punto (solo per PLOT)
   Da dove vengono le cartelle: FOLDERS = folder_info() di ogni nome, che deduce filtro, template
-  di training e NPS dal nome stesso (_parse_results_name(), split_run_tag()). likelihood_dir() da'
+  di training e NPS dal nome stesso (_parse_results_name()). likelihood_dir() da'
   la cartella di M.
 """
 
@@ -93,10 +93,10 @@ MEAS_NAME   = "000205"
 #    il filtro ottimo, analysis_BI_m205_wiener_regolarized.py per Wiener). Dal NOME si deducono
 #    tipo di filtro, template del training e sorgente della NPS (folder_info), cosi' non si
 #    possono sbagliare a mano; il controllo sul kernel in load_filters verifica comunque.
-#      m205_results_octopus_APsimfit10000led_npsclean_hist        -> filtro ottimo
-#      m205_results_wiener_APsimfit10000led_npsclean_swna1_hist   -> Wiener + penalita' su s
+#      m205_results_octopus_APsimfit10000led_npsclean         -> filtro ottimo
+#      m205_results_wiener_APsimfit10000led_npsclean_swna1    -> Wiener + penalita' su s
 #    RESULTS_NAME decide anche i punti da simulare, il template di M e dove vanno log e job.
-RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_lam1_hist"
+RESULTS_NAME = "m205_results_wiener_APsimfit10000led_npsclean_swna1"
 
 # 1b) COMPARE: altre cartelle da simulare INSIEME a RESULTS_NAME. Per ogni seed gli eventi si
 #     generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna scrive nel proprio
@@ -194,16 +194,9 @@ ROW_KEY = ("channel", "wp", "gen", "seed")                   # identita' di una 
 # ═════════════════════════════════════════════════════════════════════════════
 # LE CARTELLE DI RISULTATI: tutto si deduce dal nome
 # ═════════════════════════════════════════════════════════════════════════════
-_KNOWN_TOKEN = r"(_npsclean|_R|_(?:sbar|swna)[0-9.eE+-]+)"
-
-
-def split_run_tag(tag):
-    """Separa il nome della campagna dal RUN_TAG, il suffisso libero dei lanci di prova ("_hist",
-    "_val", ...). Il RUN_TAG sta DOPO l'ultimo token noto (_npsclean, _R, _swna<w>, _sbar<s>) e non
-    descrive la campagna: senza toglierlo finirebbe nel nome del template, che non si troverebbe.
-    Usata da _parse_results_name."""
-    ends = [m.end() for m in re.finditer(_KNOWN_TOKEN, tag)]
-    return (tag, "") if not ends else (tag[:max(ends)], tag[max(ends):])
+# Suffissi che il programma Wiener aggiunge in coda e che toccano SOLO il training (lambda fissa,
+# fase libera, lr minimo): qui non servono, si tolgono prima di leggere template e NPS.
+TRAIN_ONLY = r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+)+$"
 
 
 def _parse_results_name(name):
@@ -220,7 +213,7 @@ def _parse_results_name(name):
         raise SystemExit(f"[ERROR] '{name}' non e' una cartella di training: deve iniziare per "
                          "'m205_results_octopus' o 'm205_results_wiener'. (Le cartelle "
                          "m205_results_likelihood_* le SCRIVE questo programma, non le legge.)")
-    tag, _run = split_run_tag(tag)
+    tag = re.sub(TRAIN_ONLY, "", tag)
     tag = re.sub(r"_(sbar|swna)[0-9.eE+-]+$", "", tag)
     nps = "clean" if tag.endswith("_npsclean") else "octopus"
     tag = tag[:-len("_npsclean")] if nps == "clean" else tag

@@ -164,7 +164,7 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
           "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [31, 34, 71, 83, 91]
+ONLY_CHANNELS   = [71, 83, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -230,12 +230,17 @@ def sim_folder_tag(tag):
     return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
 
 
+# Suffisso libero per lanci di PROVA (es. "_conv3000"): cambia la cartella dei risultati, cosi'
+# un test non tocca la campagna buona. "" = campagna normale.
+RUN_TAG = "_hist"
+
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                 sim_folder_tag(SIM_SOURCE))
                + ("_R" if USE_R else "")
                + ("_npsclean" if NPS_SOURCE == "clean" else "")
                + ("" if not S_PENALTY else
-                  ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1])))
+                  ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
+               + RUN_TAG)
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -258,7 +263,7 @@ AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # GB per job
+RAM_GB            = 3         # GB per job
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
@@ -380,7 +385,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #                   del dominio di validita' del modello analitico, vedi S_PENALTY
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
                   "beta_Hz", "rho_t", "lambda_wiener", "template", "use_R", "beta_R", "n_events",
-                  "s1", "s2", "s_penalty", "BI", "J_final"]
+                  "s1", "s2", "s_penalty", "BI", "J_final", "n_trials", "train_s"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -511,6 +516,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     #   Il kernel W = S* / (|S|^2 + lambda*NPS) e' ricostruito ad ogni step in
     #   funzione di lambda, poi moltiplicato UNA volta per R(f) (reliability_R);
     #   f1, f2 e lambda sono ottimizzati insieme minimizzando J.
+    hist = {}                      # loss (J + penalita') e s1, s2 passo per passo
+    t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     f1_opt, f2_opt, lam_opt, W_unit, J_values, lambda_values = \
         an.optimize_filters_wiener_lambda(
             S_torch, w_torch,
@@ -523,10 +530,12 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
             lambda_init = 1.0,
             use_R = USE_R, N_events = n_events, beta_R = BETA_R, eps_R = EPS_R,
             s_penalty = make_s_penalty(),
+            history = hist,
             n_trials = N_TRIALS,
             use_interp = True,
             verbose = False,
         )
+    train_s = time.perf_counter() - t_train
 
     # Risoluzione relativa dei due filtri addestrati, s_i = sigma_i/mu_i (= (A.5)/(A.1) del
     # paper): e' il certificato del dominio di validita' del calcolo analitico. Misurato su
@@ -556,11 +565,18 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
         "s_penalty": "" if not S_PENALTY else ":".join(str(x) for x in S_PENALTY),
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        "n_trials": N_TRIALS,
+        "train_s": round(train_s, 1),
         # Storia dell'addestramento (non entra nel CSV): serve a vedere SE e DOVE lambda si
         # ferma. J e' sempre quella FISICA, senza penalita', quindi le due curve insieme
         # dicono anche quanto la penalita' ha spostato l'ottimo.
         "J_hist": np.asarray(J_values, dtype=float),
         "lam_hist": np.asarray(lambda_values, dtype=float),
+        # loss = J + penalita' (quella davvero minimizzata) e le s: senza queste non si vede
+        # se il training e' a regime, perche' J da sola non contiene la penalita'
+        "loss_hist": np.asarray(hist.get("loss", []), dtype=float),
+        "s1_hist": np.asarray(hist.get("s1", []), dtype=float),
+        "s2_hist": np.asarray(hist.get("s2", []), dtype=float),
         # Filtri di banda e kernel di Wiener (vettori), salvati a parte come .npy in
         # FILTERS_DIR; non entrano nel BI CSV perche' append_row_to_csv tiene solo
         # CSV_FIELDNAMES. Il filtro totale applicato ai dati e' g_i = f_i * kernel.
@@ -618,8 +634,10 @@ def run_worker(channel: int, wp: int):
         hist_dir = os.path.join(OUTPUT_DIR, "training_history")
         os.makedirs(hist_dir, exist_ok=True)
         np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"),
-                 J=res["J_hist"], lam=res["lam_hist"])
-        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
+                 J=res["J_hist"], lam=res["lam_hist"], loss=res["loss_hist"],
+                 s1=res["s1_hist"], s2=res["s2_hist"])
+        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  "
+              f"({res['n_trials']} passi in {res['train_s']:.0f} s)  ->  {OUTPUT_CSV}")
 
     except Exception as e:
         # L'errore finisce nel file di stderr del job (LOG_DIR); nessuna riga nel CSV.
