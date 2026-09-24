@@ -272,11 +272,12 @@ Il $\chi^2$ spiegato da un impulso, $L_1$, è nel metodo \texttt{statistic}:
 \begin{lstlisting}
 y = self.correlation(pulses)
 y1 = y[:, :self.n_t1]                                     # y al tempo del primo impulso
-L1 = np.max(np.clip(y1, 0, None) ** 2, axis=1) / self.R0
+L1 = np.clip(y1.max(axis=1), 0, None) ** 2 / self.R0
 \end{lstlisting}
-\texttt{np.clip(y1, 0, None)} è il $\max(0, c)$ della~\eqref{eq:LT}, cioè il vincolo $a\geq0$;
-il massimo lungo \texttt{axis=1} è il $\max_t$; \texttt{self.R0} è $R(0) = \norm{S}^2$, calcolato
-nel passo successivo.
+Il massimo lungo \texttt{axis=1} è il $\max_t$; \texttt{np.clip(..., 0, None)} è il $\max(0, c)$
+della~\eqref{eq:LT}, cioè il vincolo $a\geq0$; \texttt{self.R0} è $R(0) = \norm{S}^2$, calcolato
+nel passo successivo. Il massimo si prende \emph{prima} di clip e quadrato: sono operazioni
+monotone, quindi il valore scelto è lo stesso, ma si scorre l'array una volta sola invece di tre.
 
 %==========================================================================================
 \section{Il template del pile-up}
@@ -340,21 +341,28 @@ self.normP = np.array([((1 - self.r) ** 2 + self.r ** 2) * self.R0
 \codice{src/pileup\_likelihood.py, statistic, il ciclo sui ritardi}
 Per ogni evento, la~\eqref{eq:cP} e la~\eqref{eq:Ltheta}:
 \begin{lstlisting}
+a = (1 - self.r)[None, :, None] * y1[:, None, :]          # (1-r) y(t): non dipende da dt
+r3 = self.r[None, :, None]
+c = np.empty_like(a)                                      # riusato a ogni dt
 for j, d in enumerate(self.d_steps):
-    y2 = y[:, d:d + self.n_t1]                            # y al tempo del secondo, dt dopo
-    c = (1 - self.r)[None, :, None] * y1[:, None, :] + self.r[None, :, None] * y2[:, None, :]
-    L = np.max(np.clip(c, 0, None) ** 2, axis=2) / self.normP[j][None, :]
+    np.multiply(r3, y[:, None, d:d + self.n_t1], out=c)   # r y(t+dt)
+    c += a
+    L = np.clip(c.max(axis=2), 0, None) ** 2 / self.normP[j][None, :]
 \end{lstlisting}
 \begin{itemize}
-  \item \texttt{y2} è $y(t+\dt)$ per tutti i tempi $t$ del primo impulso: lo stesso array
-    \texttt{y}, spostato di \texttt{d} posizioni. Qui si vede perché la griglia dei tempi arriva
-    fino a $+1.3$~ms.
-  \item \texttt{c} è $c_{P_\theta}(t) = (1-r)\,y(t) + r\,y(t+\dt)$, la~\eqref{eq:cP}, per tutti gli
-    eventi, tutti gli $r$ e tutti i $t$ insieme: ha forma (eventi, $r$, $t$). Gli indici
-    \texttt{None} servono solo ad allineare le dimensioni.
-  \item L'ultima riga è la~\eqref{eq:Ltheta}: vincolo di ampiezza positiva, massimo sul tempo,
-    divisione per la norma del template di pile-up. \texttt{L} ha forma (eventi, $r$): il $\chi^2$
-    spiegato da ogni pile-up con questo ritardo.
+  \item \texttt{a} è $(1-r)\,y(t)$ per tutti gli eventi, tutti gli $r$ e tutti i tempi $t$ del
+    primo impulso: ha forma (eventi, $r$, $t$). Non dipende dal ritardo, quindi si calcola una
+    volta sola, fuori dal ciclo. Gli indici \texttt{None} servono solo ad allineare le dimensioni.
+  \item \texttt{y[:, None, d:d + self.n\_t1]} è $y(t+\dt)$: lo stesso array \texttt{y}, letto
+    \texttt{d} posizioni più avanti. Qui si vede perché la griglia dei tempi arriva fino a
+    $+1.3$~ms.
+  \item Le due righe con \texttt{c} scrivono in \texttt{c} prima $r\,y(t+\dt)$ e poi ci
+    aggiungono \texttt{a}: il risultato è $c_{P_\theta}(t) = (1-r)\,y(t) + r\,y(t+\dt)$,
+    la~\eqref{eq:cP}. L'array \texttt{c} è sempre lo stesso: non se ne crea uno nuovo per ogni
+    ritardo.
+  \item L'ultima riga è la~\eqref{eq:Ltheta}: massimo sul tempo, vincolo di ampiezza positiva,
+    divisione per la norma del template di pile-up (anche qui il massimo prima del quadrato).
+    \texttt{L} ha forma (eventi, $r$): il $\chi^2$ spiegato da ogni pile-up con questo ritardo.
   \item Nessuna FFT dentro il ciclo: solo somme e prodotti su \texttt{y}, come promesso dal
     riquadro sopra.
 \end{itemize}
@@ -624,7 +632,7 @@ guadagna (figura~\ref{fig:sopravvivenza}a).
     evidenti $L(\theta)-L_1$ arriva a centinaia e l'esponenziale andrebbe fuori scala.
   \item Nella verosimiglianza il template è l'AP simulato, lo stesso su cui sono addestrati i filtri
     di banda; gli eventi del Monte Carlo sono generati dal fit.
-  \item Costo: circa 1.3~ms per evento. Codice: classe \texttt{PileupLikelihood} in
+  \item Costo: circa 0.5~ms per evento. Codice: classe \texttt{PileupLikelihood} in
     \texttt{src/pileup\_likelihood.py}. Nel Monte Carlo della campagna si attiva con
     \texttt{LIKELIHOOD = True} in \texttt{simulate\_BI\_error\_m205.py}.
   \item Controllo: \texttt{python src/pileup\_likelihood.py} verifica che $y(t)$ coincida con la

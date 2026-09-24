@@ -125,7 +125,8 @@ GEN_TEMPLATE = "fit"
 #    compare_templates_m205.py lo legge come qualsiasi altro set, e il Delta BI e' appaiato.
 #    Tipico: RESULTS_NAME = cartella Wwna, COMPARE = [cartella OF], LIKELIHOOD = True -> un solo
 #    lancio, tre set sugli stessi impulsi. I CSV delle cartelle di training non cambiano.
-#    Costo: ~1.3 ms per evento (~4 h per job con due cartelle, M e N_SEEDS = 50; walltime 24 h).
+#    Costo di M: ~0.5 ms per evento. Sul cluster un seed (OF + M, 100 000 eventi) ~12 min, cioe' ~10 h
+#    per punto con N_SEEDS = 50 (misurato 2026-09-24, prima della versione veloce di M).
 LIKELIHOOD = True
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali di RESULTS_NAME
