@@ -299,7 +299,7 @@ ch34 wp15.
   sources). Self-check: `python src/pileup_likelihood.py` (y(t) = OF correlation within 1e-6 without
   noise and 3e-3 σ with noise — the only difference is the 1e-6 of weight in the dropped
   frequencies; noiseless single → M = ln(1/81) ≤ 0; noiseless pile-up → M > 0). Same M as the
-  validated inline version to 6e-13; ~1.3 ms per event (not 6: that estimate included Y).
+  validated inline version to 6e-13; ~1.1 ms per event, 0.5 ms since 2026-09-24 (max before clip and square, (1-r)y hoisted out of the dt loop: bit-identical, verified on 12 000 events of 3 channels).
 - **In the campaign MC, as a SET of its own**: `simulate_BI_error_m205.py`, knob
   **`LIKELIHOOD = False`**. When True, for every seed the SAME events that go through the filters
   of RESULTS_NAME and of every COMPARE folder also go through M (built by `make_likelihood` on

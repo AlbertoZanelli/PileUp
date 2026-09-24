@@ -105,14 +105,19 @@ class PileupLikelihood:
         """M per ogni evento (eq. 20). pulses: (n_eventi, n_campioni), nel dominio del tempo."""
         y = self.correlation(pulses)
         y1 = y[:, :self.n_t1]                                     # y al tempo del primo impulso
-        # un impulso: chi^2 spiegato, ampiezza >= 0  (eq. 9)
-        L1 = np.max(np.clip(y1, 0, None) ** 2, axis=1) / self.R0
+        # un impulso: chi^2 spiegato, ampiezza >= 0  (eq. 9). Il massimo si prende PRIMA di clip e
+        # quadrato: sono monotoni, quindi il numero e' lo stesso bit per bit, con una passata sola.
+        L1 = np.clip(y1.max(axis=1), 0, None) ** 2 / self.R0
+        a = (1 - self.r)[None, :, None] * y1[:, None, :]          # (1-r) y(t): non dipende da dt
+        r3 = self.r[None, :, None]
+        c = np.empty_like(a)                                      # riusato a ogni dt
         terms = []
         for j, d in enumerate(self.d_steps):
-            y2 = y[:, d:d + self.n_t1]                            # y al tempo del secondo, dt dopo
-            # template di pile-up al tempo t: (1-r) y(t) + r y(t+dt)   (eq. 12), per ogni r
-            c = (1 - self.r)[None, :, None] * y1[:, None, :] + self.r[None, :, None] * y2[:, None, :]
-            L = np.max(np.clip(c, 0, None) ** 2, axis=2) / self.normP[j][None, :]   # (eq. 14)
+            # template di pile-up al tempo t: (1-r) y(t) + r y(t+dt)   (eq. 12), per ogni r;
+            # y(t+dt) e' y letta d passi dopo
+            np.multiply(r3, y[:, None, d:d + self.n_t1], out=c)
+            c += a
+            L = np.clip(c.max(axis=2), 0, None) ** 2 / self.normP[j][None, :]   # (eq. 14)
             terms.append(self.log_prior[None, :] + 0.5 * (L - L1[:, None]))
         # somma pesata degli exp in forma logaritmica: L - L1 arriva a centinaia (eq. 20)
         return logsumexp(np.concatenate(terms, axis=1), axis=1)
