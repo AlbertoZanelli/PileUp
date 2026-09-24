@@ -267,6 +267,9 @@ def append_row_to_csv(path: str, row: dict):
         fcntl.flock(f, fcntl.LOCK_EX)          # lock esclusivo
         try:
             writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+            # la posizione presa all'open e' di PRIMA del lock: se un altro job ha scritto nel
+            # frattempo sarebbe ancora 0 e l'header finirebbe due volte nel CSV. Si rilegge qui.
+            f.seek(0, os.SEEK_END)
             if f.tell() == 0:                  # file vuoto -> scrivi prima l'header
                 writer.writeheader()
             writer.writerow({k: row.get(k) for k in CSV_FIELDNAMES})
