@@ -9,6 +9,15 @@
 \usepackage{xcolor}
 \usepackage[hidelinks]{hyperref}
 \usepackage{tcolorbox}
+\usepackage{listings}
+
+\lstset{language=Python, basicstyle=\ttfamily\footnotesize, columns=fullflexible, keepspaces=true,
+  keywordstyle=\color{blue!60!black}\bfseries, commentstyle=\color{green!40!black}\itshape,
+  stringstyle=\color{red!50!black}, showstringspaces=false, upquote=true, breaklines=true,
+  frame=single, rulecolor=\color{black!25}, backgroundcolor=\color{black!3},
+  xleftmargin=4pt, xrightmargin=4pt, aboveskip=6pt, belowskip=4pt}
+% intestazione di un estratto: file e funzione da cui viene
+\newcommand{\codice}[1]{\par\medskip\noindent{\small\textbf{Nel codice} --- \texttt{#1}}\par}
 
 \newcommand{\scal}[2]{\left\langle #1,\, #2 \right\rangle}
 \newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
@@ -20,7 +29,7 @@
 \title{Uno stimatore di verosimiglianza per il pile-up\\[2pt]
 \large derivazione passo per passo}
 \author{Note per la tesi -- misura m205, rivelatori di luce CUPID}
-\date{23 settembre 2026}
+\date{24 settembre 2026}
 
 \begin{document}
 \maketitle
@@ -43,6 +52,13 @@ Si rigettano gli eventi per cui la risposta pende abbastanza verso il pile-up.
 \end{enumerate}
 Nelle sezioni~\ref{sec:limiti} e~\ref{sec:risultati} si vede cosa fa lo stimatore e quanto guadagna;
 nella sezione~\ref{sec:fonti} si dice da dove viene ogni passaggio.
+
+Alla fine di ogni passaggio c'è la parte di codice che lo realizza (riquadri grigi), copiata dai
+file del progetto e spiegata riga per riga. Lo stimatore sta tutto nella classe
+\texttt{PileupLikelihood} di \texttt{src/pileup\_likelihood.py}: il costruttore
+\texttt{\_\_init\_\_} calcola una volta per canale e punto di lavoro tutto ciò che non dipende
+dall'evento, il metodo \texttt{statistic} calcola $M$ per ogni evento. Gli estratti sono in ordine
+di derivazione, non di file; i commenti del codice originale sono stati accorciati.
 
 %==========================================================================================
 \section{Il modello dei dati}
@@ -81,6 +97,39 @@ Chiamo $\theta = (\dt, r)$ i due parametri che distinguono un pile-up dall'altro
 \paragraph{Rumore.} Gaussiano e stazionario. La stazionarietà rende indipendenti le diverse
 frequenze, ciascuna con varianza proporzionale a $J_k$. Sono esattamente le ipotesi del filtro
 ottimo: non se ne aggiungono altre.
+
+\codice{src/simulation.py, simulate\_frequency\_pulses}
+Il Monte Carlo genera gli eventi esattamente secondo questo modello, direttamente in frequenza:
+\begin{lstlisting}
+complex_gauss = rng.normal(size=(nsim, M)) + 1j * rng.normal(size=(nsim, M))
+noise_freq = complex_gauss * np.sqrt(nps[None, :])                 # N_k
+amplitude = rng.normal(loc=signal_scale, scale=detector_sigma, size=nsim)[:, None]
+signal_freq = amplitude * S[None, :]                               # A S_k
+generated_r = inverse_cdf_ratio2b(rng.random(nsim))                # r
+generated_dt = rng.uniform(0, dt_max, nsim)                        # dt
+exp_term = np.exp(-1j * w * generated_dt[:, None])                 # e^{-i w dt}
+phase = (1 - generated_r[:, None]) + generated_r[:, None] * exp_term
+fpulses = signal_freq * phase + noise_freq                         # eq. (2)
+\end{lstlisting}
+e poi, in \texttt{simulate\_psd}, si torna nel tempo:
+\begin{lstlisting}
+pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
+\end{lstlisting}
+\begin{itemize}
+  \item Le prime due righe sono il rumore $N_k$: un numero complesso gaussiano per frequenza, con
+    varianza proporzionale a $J_k$ (\texttt{nps}). Frequenze diverse sono estratte in modo
+    indipendente: è l'ipotesi di rumore stazionario.
+  \item \texttt{amplitude} è $A$; con \texttt{detector\_sigma = 0} (come nella campagna) è fissa e
+    uguale all'ampiezza del punto di lavoro.
+  \item \texttt{phase} è la parentesi quadra della~\eqref{eq:pileup}, con $r$ estratto dalla
+    distribuzione dei pile-up $2\nu\beta\beta$ e $\dt$ uniforme fra 0 e \texttt{dt\_max}. Gli impulsi
+    singoli si ottengono con \texttt{dt\_max = 0}: allora \texttt{phase} vale 1 per ogni $r$.
+  \item $t_0 = 0$: nel Monte Carlo il primo impulso sta sempre nella posizione del template. Lo
+    stimatore però non lo sa e lo cerca (sezione~\ref{sec:fit}).
+  \item L'ultima riga porta l'evento nel tempo. Lo stimatore riceve \texttt{pulses}, come riceverebbe
+    un evento vero, e rifà da sé la FFT. Il \texttt{.real} dimezza la varianza del rumore: è la
+    ragione per cui vale la convenzione della~\eqref{eq:varianza}, verificata sul Monte Carlo.
+\end{itemize}
 
 %==========================================================================================
 \section{Una distanza pesata con il rumore}
@@ -123,6 +172,29 @@ distanza in unità di rumore.} Di conseguenza, per due modelli $m_1$ e $m_2$,
 il logaritmo del rapporto di verosimiglianza è metà del $\chi^2$ che $m_1$ lascia \emph{in meno}
 rispetto a $m_2$.
 
+\codice{src/pileup\_likelihood.py, PileupLikelihood.\_\_init\_\_, passo 1}
+\begin{lstlisting}
+weight = np.abs(S) ** 2 / nps                        # |S|^2 / J: peso di ogni frequenza
+
+pos = np.arange(1, N // 2)                           # frequenze positive, senza DC e Nyquist
+order = pos[np.argsort(weight[pos])[::-1]]           # dalla piu' pesante alla piu' leggera
+n_keep = np.searchsorted(np.cumsum(weight[order]) / weight[pos].sum(), keep) + 1
+self.k = np.sort(order[:n_keep])                     # le frequenze che si tengono
+\end{lstlisting}
+\begin{itemize}
+  \item La metrica~\eqref{eq:metrica} non compare come funzione a sé: compare ogni volta che si
+    divide per \texttt{nps}. \texttt{weight} è il contributo di ogni frequenza a $\norm{S}^2$: dice
+    quanto quella frequenza conta nel distinguere un impulso dal rumore.
+  \item Un segnale reale ha lo spettro simmetrico ($X_{-k} = X_k^*$), quindi la somma su tutte le
+    frequenze della~\eqref{eq:metrica} è il termine a frequenza zero più \emph{due volte} la somma
+    sulle frequenze positive. Per questo il codice lavora solo con \texttt{pos} e poi moltiplica
+    per 2.
+  \item Le altre righe scartano le frequenze inutili: si ordinano per peso e si tengono le prime
+    fino a raggiungere la frazione \texttt{keep} $= 1-10^{-6}$ del peso totale. Le frequenze
+    scartate hanno template trascurabile rispetto al rumore e non cambiano la distanza; tenerle
+    costerebbe solo tempo di calcolo (sezione~\ref{sec:fit}).
+\end{itemize}
+
 %==========================================================================================
 \section{Adattare un template con ampiezza e tempo ignoti}
 \label{sec:fit}
@@ -163,6 +235,49 @@ $\hat A = y(\hat t)/R(0)$ è l'ampiezza dell'OF, e
 \end{equation}
 è il quadrato del rapporto segnale/rumore dell'evento visto dal filtro ottimo.
 
+\codice{src/pileup\_likelihood.py, \_\_init\_\_ passo 2, e il metodo correlation}
+Tutto ciò che nella~\eqref{eq:y} non dipende dall'evento si prepara una volta sola:
+\begin{lstlisting}
+self.t = np.round(np.arange(-t_window, t_window + dt_max + step / 2, step), 12)
+self.n_t1 = int(round(2 * t_window / step)) + 1      # tempi possibili del PRIMO impulso
+wt = np.outer(w[self.k], self.t)
+self.cos, self.sin = np.cos(wt), np.sin(wt)
+self.filt = (np.conj(S) / nps)[self.k]               # S*/J sulle frequenze tenute
+self.dc = (np.conj(S[0]) / nps[0]).real
+\end{lstlisting}
+e per ogni evento resta:
+\begin{lstlisting}
+def correlation(self, pulses):
+    X = np.fft.fft(np.asarray(pulses, dtype=np.float64), axis=1)
+    Z = X[:, self.k] * self.filt[None, :]
+    return X[:, [0]].real * self.dc + 2 * (Z.real @ self.cos - Z.imag @ self.sin)
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{self.t} è la griglia dei tempi $t$ su cui si legge $y(t)$: da $-0.5$ a
+    $+1.3$~ms a passi di \texttt{step} $= 0.01$~ms. Il campionamento (0.1~ms) è troppo grosso per
+    ritardi di qualche decimo di ms, quindi $y$ si legge anche fra un campione e l'altro. Per lo
+    stesso motivo non si usa la FFT inversa, che darebbe $y$ solo sui campioni.
+  \item I primi \texttt{n\_t1} tempi (da $-0.5$ a $+0.5$~ms) sono quelli in cui si cerca il primo
+    impulso; la griglia prosegue per altri \texttt{dt\_max} $= 0.8$~ms perché serviranno i valori
+    di $y$ al tempo del secondo impulso (sezione successiva).
+  \item \texttt{Z} è $X_k S_k^*/J_k$ sulle frequenze tenute. Il fattore $\e^{i\omega_k t}$ della
+    \eqref{eq:y} si scrive con coseno e seno:
+    $\mathrm{Re}(Z\,\e^{i\omega t}) = \mathrm{Re}Z\cos\omega t - \mathrm{Im}Z\sin\omega t$. Le due
+    moltiplicazioni matriciali (\texttt{@}) calcolano questa somma per tutti gli eventi e tutti i
+    tempi in un colpo solo.
+  \item Il fattore 2 e il termine a frequenza zero (\texttt{dc}) sono la simmetria dello spettro
+    del passo precedente.
+\end{itemize}
+Il $\chi^2$ spiegato da un impulso, $L_1$, è nel metodo \texttt{statistic}:
+\begin{lstlisting}
+y = self.correlation(pulses)
+y1 = y[:, :self.n_t1]                                     # y al tempo del primo impulso
+L1 = np.max(np.clip(y1, 0, None) ** 2, axis=1) / self.R0
+\end{lstlisting}
+\texttt{np.clip(y1, 0, None)} è il $\max(0, c)$ della~\eqref{eq:LT}, cioè il vincolo $a\geq0$;
+il massimo lungo \texttt{axis=1} è il $\max_t$; \texttt{self.R0} è $R(0) = \norm{S}^2$, calcolato
+nel passo successivo.
+
 %==========================================================================================
 \section{Il template del pile-up}
 %==========================================================================================
@@ -200,6 +315,50 @@ volta per canale e punto di lavoro. Provare centinaia di pile-up diversi non cos
 più: servono solo combinazioni di $y$ letta a due tempi.
 \end{idea}
 
+\codice{src/pileup\_likelihood.py, \_\_init\_\_ passi 3 e 4}
+La parte che dipende solo dal template, cioè la~\eqref{eq:normP}:
+\begin{lstlisting}
+wk, pk = w[self.k], weight[self.k]
+R = lambda tau: weight[0] + 2 * np.sum(pk * np.cos(wk * tau))
+self.R0 = R(0.0)
+
+self.d_steps = np.arange(0, int(round(dt_max / step)) + 1)
+self.r = np.asarray(r_values, dtype=float)
+self.normP = np.array([((1 - self.r) ** 2 + self.r ** 2) * self.R0
+                       + 2 * self.r * (1 - self.r) * R(d * step) for d in self.d_steps])
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{R} è l'autocorrelazione $R(\tau)$ della~\eqref{eq:normP}, sulle stesse frequenze
+    usate per $y$ e con lo stesso ``DC + due volte le positive''.
+  \item I ritardi non si esprimono in secondi ma in \emph{passi della griglia}: \texttt{d\_steps}
+    va da 0 a 80, cioè $\dt$ da 0 a 0.8~ms a passi di 0.01~ms (81 valori). Così
+    $y(t+\dt)$ è semplicemente $y$ letta \texttt{d} posizioni più avanti nell'array.
+  \item \texttt{self.r} sono i 19 valori di $r$ da 0.05 a 0.95.
+  \item \texttt{self.normP} è la tabella $81\times19$ di $\norm{P_\theta}^2$: una riga per ritardo,
+    una colonna per $r$.
+\end{itemize}
+\codice{src/pileup\_likelihood.py, statistic, il ciclo sui ritardi}
+Per ogni evento, la~\eqref{eq:cP} e la~\eqref{eq:Ltheta}:
+\begin{lstlisting}
+for j, d in enumerate(self.d_steps):
+    y2 = y[:, d:d + self.n_t1]                            # y al tempo del secondo, dt dopo
+    c = (1 - self.r)[None, :, None] * y1[:, None, :] + self.r[None, :, None] * y2[:, None, :]
+    L = np.max(np.clip(c, 0, None) ** 2, axis=2) / self.normP[j][None, :]
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{y2} è $y(t+\dt)$ per tutti i tempi $t$ del primo impulso: lo stesso array
+    \texttt{y}, spostato di \texttt{d} posizioni. Qui si vede perché la griglia dei tempi arriva
+    fino a $+1.3$~ms.
+  \item \texttt{c} è $c_{P_\theta}(t) = (1-r)\,y(t) + r\,y(t+\dt)$, la~\eqref{eq:cP}, per tutti gli
+    eventi, tutti gli $r$ e tutti i $t$ insieme: ha forma (eventi, $r$, $t$). Gli indici
+    \texttt{None} servono solo ad allineare le dimensioni.
+  \item L'ultima riga è la~\eqref{eq:Ltheta}: vincolo di ampiezza positiva, massimo sul tempo,
+    divisione per la norma del template di pile-up. \texttt{L} ha forma (eventi, $r$): il $\chi^2$
+    spiegato da ogni pile-up con questo ritardo.
+  \item Nessuna FFT dentro il ciclo: solo somme e prodotti su \texttt{y}, come promesso dal
+    riquadro sopra.
+\end{itemize}
+
 %==========================================================================================
 \section{Pile-up contro singolo, per un pile-up fissato}
 %==========================================================================================
@@ -215,6 +374,16 @@ differenza è zero.
 
 Se si conoscesse in anticipo $\theta$, questa sarebbe la statistica da usare. Ma $\theta$ cambia da
 un pile-up all'altro: serve un modo di combinare tutti i $\theta$.
+
+\codice{src/pileup\_likelihood.py, statistic, ultima riga del ciclo}
+\begin{lstlisting}
+    terms.append(self.log_prior[None, :] + 0.5 * (L - L1[:, None]))
+\end{lstlisting}
+\texttt{0.5 * (L - L1[:, None])} è esattamente la~\eqref{eq:LRtheta}: il logaritmo del rapporto di
+verosimiglianza fra il miglior pile-up con questo $(\dt, r)$ e il miglior impulso singolo, per ogni
+evento e ogni $r$. Per \texttt{d = 0} vale zero per ogni $r$: $y_2 = y_1$, quindi
+$c = y(t)$, e $\norm{P_\theta}^2 = R(0)$. Il logaritmo del peso \texttt{log\_prior} si aggiunge qui,
+prima della somma della sezione successiva (in forma logaritmica un prodotto diventa una somma).
 
 %==========================================================================================
 \section{Da un pile-up fissato a tutti: perché la media}
@@ -290,6 +459,35 @@ $\pi(\dt, r) = \pi(\dt)\,\pi(r)$:
 Se $\pi$ fosse sbagliata il test resterebbe valido (l'accettanza dei singoli si fissa comunque al
 90\%), ma non sarebbe più ottimo.
 
+\subsection{Nel codice: i pesi e la media}
+\codice{src/pileup\_likelihood.py, \_\_init\_\_ passo 5}
+\begin{lstlisting}
+pr = pdf_ratio2b(self.r)
+self.log_prior = np.log(pr / pr.sum()) - np.log(len(self.d_steps))
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{pdf\_ratio2b} (\texttt{utility/double\_beta\_spectrum.py}) è la densità di $r$, la
+    stessa con cui il Monte Carlo estrae i pile-up. Divisa per la sua somma dà pesi che sommano a 1
+    sui 19 valori di $r$.
+  \item Il ritardo è uniforme: ognuno degli 81 valori pesa $1/81$, cioè $-\ln 81$ nel logaritmo.
+    Quindi $\sum_\theta \pi(\theta) = 1$ esattamente sulla griglia.
+  \item Si tiene il logaritmo del peso perché la somma si fa in forma logaritmica (sotto).
+\end{itemize}
+\codice{src/pileup\_likelihood.py, statistic, dopo il ciclo}
+\begin{lstlisting}
+return logsumexp(np.concatenate(terms, axis=1), axis=1)
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{terms} contiene, per ogni ritardo, i valori $\ln\pi(\theta) + \tfrac12[L(\theta)-L_1]$
+    di tutti gli $r$; \texttt{concatenate} li mette in fila, $81 \times 19 = 1539$ per evento.
+  \item \texttt{logsumexp} calcola $\ln\sum \e^{(\cdot)}$, cioè esattamente la~\eqref{eq:M}:
+    $\ln\sum_\theta \pi(\theta)\,\e^{[L(\theta)-L_1]/2}$. Lo fa sottraendo prima il termine più
+    grande, così l'esponenziale non va fuori scala quando $L(\theta)-L_1$ arriva a centinaia.
+\end{itemize}
+Una conseguenza utile per leggere i valori: siccome $\sum\pi = 1$ e per $\dt = 0$ il termine vale
+$\e^0 = 1$, $M$ è negativo quando l'evento è spiegato meglio da un singolo che dalla media dei
+pile-up. Su un singolo senza rumore contribuisce solo la riga $\dt = 0$ e $M = \ln(1/81)$.
+
 %==========================================================================================
 \section{Il taglio e il BI}
 %==========================================================================================
@@ -300,6 +498,40 @@ lascia passare il 90\%, si rigettano gli eventi con $M > c$, e
   \mathrm{BI} = K \times \text{(frazione di pile-up simulati con } M \leq c).
 \end{equation}
 Non c'è niente da addestrare: servono solo il template, la NPS e la soglia.
+
+\codice{simulate\_BI\_error\_m205.py, make\_likelihood, run\_pair e bi\_from}
+Lo stimatore si costruisce una volta per punto, sul template di training e sulla NPS:
+\begin{lstlisting}
+S, w, _ = an.compute_H(template_pulse(channel, wp, f["train"], f["sim"]), nps, np.hanning,
+                       sampling_rate=SAMPLING_RATE)
+return PileupLikelihood(S, nps, w, dt_max=T_MAX)
+\end{lstlisting}
+poi gli \emph{stessi} eventi che passano per i filtri di banda passano anche per $M$:
+\begin{lstlisting}
+stats = () if likelihood is None else (lambda p: -likelihood.statistic(p),)
+singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats)
+pileups = simulate_psd(S, nps, w, filters, signal_amp, T_MAX, seed, stats)
+out = [bi_from(s, p) for s, p in zip(singles, pileups)]
+\end{lstlisting}
+e il BI si calcola come per il rapporto dei massimi:
+\begin{lstlisting}
+cut = np.percentile(psd_single, 100 - ACCEPTANCE * 100)
+rp = float(np.mean(psd_pileup < cut))
+... BI_mc=fn.K * (1.0 - rp) ...
+\end{lstlisting}
+\begin{itemize}
+  \item \texttt{compute\_H} dà lo spettro $S$ del template con la finestra di Hann, la stessa
+    convenzione dei filtri. Il template è quello di \emph{training} (l'AP simulato), mentre gli
+    eventi nascono dal fit: $M$ non conosce la forma vera.
+  \item \texttt{T\_MAX} $= 0.8$~ms è lo stesso ritardo massimo del Monte Carlo e del BI analitico.
+  \item Singoli (\texttt{dt\_max = 0}) e pile-up (\texttt{dt\_max = T\_MAX}) sono generati con lo
+    stesso seme: gli eventi sono gli stessi per tutti gli algoritmi, e la differenza di BI fra $M$ e
+    $Y$ si misura evento per evento.
+  \item Si passa $-M$: così il pile-up sta nella coda \emph{bassa} come per il rapporto dei
+    massimi, e \texttt{bi\_from} vale per entrambi. \texttt{cut} è il 10° percentile di $-M$ sui
+    singoli, cioè la soglia $c$ che accetta il 90\% dei singoli; \texttt{rp} è la frazione di
+    pile-up rigettata e $\mathrm{BI} = K(1-r_p)$.
+\end{itemize}
 
 %==========================================================================================
 \section{Cosa fa $M$: i due regimi}
@@ -381,6 +613,7 @@ guadagna (figura~\ref{fig:sopravvivenza}a).
 %==========================================================================================
 \section{Implementazione}
 %==========================================================================================
+\begin{sloppypar}
 \begin{itemize}
   \item $y(t)$ si calcola su una griglia fine (passo 0.01~ms), perché il campionamento (0.1~ms) è
     troppo grosso rispetto ai ritardi in gioco: somma diretta sulle frequenze che portano il
@@ -391,14 +624,23 @@ guadagna (figura~\ref{fig:sopravvivenza}a).
     evidenti $L(\theta)-L_1$ arriva a centinaia e l'esponenziale andrebbe fuori scala.
   \item Nella verosimiglianza il template è l'AP simulato, lo stesso su cui sono addestrati i filtri
     di banda; gli eventi del Monte Carlo sono generati dal fit.
-  \item Costo: circa 6~ms per evento. Codice: \texttt{test/likelihood\_estimator\_m205.py}.
+  \item Costo: circa 1.3~ms per evento. Codice: classe \texttt{PileupLikelihood} in
+    \texttt{src/pileup\_likelihood.py}. Nel Monte Carlo della campagna si attiva con
+    \texttt{LIKELIHOOD = True} in \texttt{simulate\_BI\_error\_m205.py}.
+  \item Controllo: \texttt{python src/pileup\_likelihood.py} verifica che $y(t)$ coincida con la
+    correlazione del filtro ottimo calcolata con la FFT (entro $10^{-6}$ senza rumore), che un
+    singolo senza rumore dia $M\leq0$ e un pile-up senza rumore $M>0$.
+  \item Un evento analizzato passo per passo, con le grandezze di ogni sezione e la sua posizione
+    nelle distribuzioni di $M$: \texttt{show\_likelihood\_m205.py}.
 \end{itemize}
+\end{sloppypar}
 
 %==========================================================================================
 \section{Risultati}
 \label{sec:risultati}
 %==========================================================================================
-Riferimento: il rapporto dei massimi $Y$ con i filtri Wiener addestrati (campagna \texttt{\_swna1\_hist}).
+Riferimento: il rapporto dei massimi $Y$ con i filtri Wiener addestrati a 500 passi (campagna
+\texttt{\_swna1}).
 Per ciascuno stimatore il taglio accetta il 90\% dei singoli; le differenze sono misurate sugli
 \emph{stessi eventi}, con errore da bootstrap appaiato.
 
@@ -436,6 +678,12 @@ Ch34 WP15 & 124 & $-0.41 \pm 0.31\%$ & $-0.31 \pm 0.23\%$ & $-2.4\%$ \\
 \begin{itemize}
   \item Rumore gaussiano e stazionario descritto dalla NPS: le stesse ipotesi del filtro ottimo.
   \item Forma dell'impulso nota e uguale per i due impulsi del pile-up.
+  \item $M$ confronta ``un impulso'' con ``due impulsi a meno di 0.8~ms'': un secondo impulso più
+    lontano non entra in nessuna delle due ipotesi e non viene visto, anche se grande. Misurato
+    (pile-up a $\dt$ fisso, taglio al 90\%): su ch31 WP7 ($r = 0.5$) il rigetto scende dal 100\% a
+    1~ms al 35\% a 2~ms; su ch34 WP15 regge fino a 5~ms. Lo stesso vale per $Y$. È coerente con il
+    BI, che conta solo i pile-up entro 0.8~ms (il fattore $K$), ma presuppone che quelli più
+    separati siano eliminati da altro.
   \item Ampiezza e tempo sono profilati, non integrati: $M$ è un'approssimazione del test ottimo.
   \item La soglia si fissa su impulsi singoli simulati; sui dati reali andrebbe calibrata su un
     campione di singoli, come per $Y$.
