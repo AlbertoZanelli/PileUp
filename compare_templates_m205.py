@@ -88,6 +88,12 @@ MC_GEN = "fit"           # "root" | "fit"
 # simulate_BI_error con N_SEEDS > 1 (serve per l'errore APPAIATO su Delta BI, vedi paired).
 MC_CSV = "BI_mc_error_m205_seeds50.csv"     # | "BI_mc_error_m205.csv" (un seed)
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
+# Barra d'errore del MC a piu' seed, per BI e Delta BI (e quindi per z):
+#   "width"  -> LARGHEZZA (P84 - P16)/2 della distribuzione sui seed: l'incertezza di UNA
+#               simulazione da NSIM eventi, non si riduce aggiungendo seed (scelta prudente);
+#   "median" -> errore della MEDIANA, sqrt(pi/2) * larghezza / sqrt(n): quanto bene e' nota la
+#               mediana, si riduce come 1/sqrt(n) (~0.18 x la larghezza con 50 seed).
+ERROR_BAR = "width"
 # Target CUPID sul pile-up: meta' del budget totale di 1e-4 counts/(keV kg yr).
 # Disegnato in tutti i pannelli che mostrano il BI. None per non disegnarlo.
 BI_TARGET = 5e-5
@@ -253,8 +259,9 @@ def robust_sigma(x):
 
 
 def med_err(x):
-    """(mediana, errore della mediana) di campioni indipendenti, dalla dispersione MISURATA:
-    sqrt(pi/2) * robust_sigma / sqrt(n).
+    """(mediana, incertezza) di campioni indipendenti, dalla dispersione MISURATA. L'incertezza e'
+    quella scelta con ERROR_BAR: la larghezza robust_sigma, oppure l'errore della mediana
+    sqrt(pi/2) * robust_sigma / sqrt(n). Per l'errore della mediana:
     MISURATO con n = 50 (4000 esperimenti, stima / errore vero; fra parentesi la dispersione):
                          gauss        t5           lognormale   1 seed a 8 sigma
       std                1.01 (10%)   1.22 (17%)   1.21 (19%)   1.52 (5%)
@@ -262,13 +269,14 @@ def med_err(x):
       bootstrap          1.04 (25%)   1.02 (26%)   1.03 (26%)   1.04 (25%)
     I percentili sono corretti in tutti i casi e quasi precisi quanto la std sul gaussiano."""
     x = np.asarray(x, dtype=float)
-    return float(np.median(x)), float(np.sqrt(np.pi / 2) * robust_sigma(x) / np.sqrt(len(x)))
+    w = robust_sigma(x)
+    return float(np.median(x)), float(w if ERROR_BAR == "width" else np.sqrt(np.pi / 2) * w / np.sqrt(len(x)))
 
 
 def align_seeds(data, keys):
     """Riduce ogni punto (canale, WP) ai seed COMUNI a tutti i set che hanno il MC, poi:
-    BI_mc = MEDIANA sui seed, sigma_BI = errore della mediana dalla dispersione misurata sui
-    seed (med_err), nsim = totale. Con un seed solo resta il sigma della formula
+    BI_mc = MEDIANA sui seed, sigma_BI = larghezza o errore della mediana (ERROR_BAR) dalla
+    dispersione misurata sui seed (med_err), nsim = totale. Con un seed solo resta il sigma della formula
     (compute_BI_uncertainty), l'unico disponibile.
 
     Cosi' filtri diversi sono confrontati SEMPRE sugli stessi N seed, cioe' sugli stessi
@@ -406,8 +414,9 @@ def delta_err(rec_ref, rec, spec_ref, spec):
         sigma_Delta = 100 * R * sqrt( (sigma_B/B)^2 + (sigma_A/A)^2 )
     che trascura la covarianza: i due set girano sugli STESSI eventi (stesso seed), quindi i
     BI sono correlati positivamente e la barra e' CONSERVATIVA. Se i due set hanno piu' seed
-    in comune (N_SEEDS di simulate_BI_error) si usa invece l'errore della MEDIANA dei Delta
-    seed per seed (med_err), che la covarianza la contiene (vedi paired).
+    in comune (N_SEEDS di simulate_BI_error) si usa invece la dispersione dei Delta seed per
+    seed (med_err, larghezza o errore della mediana secondo ERROR_BAR), che la covarianza la
+    contiene (vedi paired).
     Sul BI analitico sigma = 0, quindi una coppia analitico-vs-analitico non ha barra: e'
     corretto, non e' un dato mancante."""
     ta, sa = series(spec_ref)

@@ -11,8 +11,8 @@ sono quelli dei grafici di confronto. Una figura per canale e per quantita', un 
                        sigma_p(BI_s) / sigma della formula (compute_BI_uncertainty, per UNA
                        run), con sigma_p = (P84-P16)/2 dei seed: ~1 se l'errore per run e' giusto
   dist_dBI_ch<ch>.png  istogramma di Delta BI_s [%] per coppia, seed per seed (stessi eventi);
-                       linea = mediana, banda = errore della mediana, cioe' la barra dei
-                       grafici di confronto
+                       linea = mediana, banda = larghezza (P84 - P16)/2 dei seed, cioe'
+                       l'incertezza di UNA simulazione (non divisa per sqrt(n))
 
 Uso:
     KMP_DUPLICATE_LIB_OK=TRUE python3 plot_BI_distributions_m205.py
@@ -87,12 +87,12 @@ def plot_dbi(data, keys, ch, wps):
                 continue
             drawn = True
             col = ct.DELTA_COLOR if len(pairs) == 1 else ct.color(tb)
-            m, e = ct.med_err(d)
+            m, w = float(np.median(d)), ct.robust_sigma(d)   # mediana e LARGHEZZA dei seed
             a.hist(d, bins=15, histtype="stepfilled", alpha=0.35, color=col,
                    label=ct.pair_label(sa, sb))
             a.axvline(m, color=col, lw=1.6)
-            a.axvspan(m - e, m + e, color=col, alpha=0.25, lw=0)
-            txt.append(f"{m:+.2f} ± {e:.2f} %")
+            a.axvspan(m - w, m + w, color=col, alpha=0.25, lw=0)
+            txt.append(f"{m:+.2f} ± {w:.2f} %")
         if not txt:
             a.axis("off")
             continue
@@ -106,7 +106,7 @@ def plot_dbi(data, keys, ch, wps):
     axes[0].legend(fontsize=8)
     return save(fig, f"dist_dBI_ch{ch}.png",
                 f"m205 Ch{ch} — ΔBI seed by seed, same events (line: median, "
-                f"band: error of the median)")
+                f"band: width of the distribution, (P84 - P16)/2)")
 
 
 def main():
