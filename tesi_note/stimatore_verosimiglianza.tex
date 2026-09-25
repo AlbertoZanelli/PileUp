@@ -26,7 +26,7 @@
 \newtcolorbox{idea}{colback=blue!4,colframe=blue!40,boxrule=0.5pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
 \newtheorem*{lemma}{Lemma di Neyman--Pearson}
 
-\title{Uno stimatore di verosimiglianza per il pile-up\\[2pt]
+\title{OPURA: Optimum Pile-Up Rejection Algorithm\\[2pt]
 \large derivazione passo per passo}
 \author{Note per la tesi -- misura m205, rivelatori di luce CUPID}
 \date{24 settembre 2026}
@@ -50,15 +50,6 @@ Si rigettano gli eventi per cui la risposta pende abbastanza verso il pile-up.
   \item si confronta pile-up e singolo per un ritardo fissato;
   \item si passa a tutti i ritardi: il lemma di Neyman--Pearson dice come combinarli per minimizzare il BI.
 \end{enumerate}
-Nelle sezioni~\ref{sec:limiti} e~\ref{sec:risultati} si vede cosa fa lo stimatore e quanto guadagna;
-nella sezione~\ref{sec:fonti} si dice da dove viene ogni passaggio.
-
-Alla fine di ogni passaggio c'è la parte di codice che lo realizza (riquadri grigi), copiata dai
-file del progetto e spiegata riga per riga. Lo stimatore sta tutto nella classe
-\texttt{PileupLikelihood} di \texttt{src/pileup\_likelihood.py}: il costruttore
-\texttt{\_\_init\_\_} calcola una volta per canale e punto di lavoro tutto ciò che non dipende
-dall'evento, il metodo \texttt{statistic} calcola $M$ per ogni evento. Gli estratti sono in ordine
-di derivazione, non di file; i commenti del codice originale sono stati accorciati.
 
 %==========================================================================================
 \section{Il modello dei dati}
@@ -644,14 +635,165 @@ guadagna (figura~\ref{fig:sopravvivenza}a).
 \end{sloppypar}
 
 %==========================================================================================
+\section{Vantaggi rispetto all'algoritmo con i filtri}
+\label{sec:vantaggi}
+%==========================================================================================
+L'algoritmo di riferimento (il paper) filtra l'evento con due filtri di banda addestrati e usa come
+discriminante il rapporto dei due massimi, $Y$. OPURA ne differisce in sei punti, tutti misurati in
+questo lavoro.
+
+\begin{enumerate}
+  \item \textbf{Non si addestra niente.} Servono solo il template e la NPS, gli stessi del filtro
+    ottimo: nessuna ottimizzazione, nessuna inizializzazione casuale, nessun learning rate o numero
+    di passi da scegliere. Questo conta più di quanto sembri:
+    \begin{itemize}
+      \item l'addestramento dei filtri costa $\sim$20 minuti per punto di lavoro (500 passi);
+      \item il risultato dei filtri dipende dall'inizializzazione casuale: due addestramenti
+        identici dello stesso punto differiscono in mediana dello 0\%, ma fino al 2.7\% sul singolo
+        punto;
+      \item il confronto fra filtri ottimi e Wiener addestrati ha mostrato che differenze dell'1--2\%
+        venivano dalla dinamica dell'addestramento (il learning rate), non dal filtro. Con OPURA
+        questa sorgente di incertezza non esiste: dati template e NPS, $M$ è unico e riproducibile.
+    \end{itemize}
+  \item \textbf{Non usa il BI analitico.} I filtri si addestrano minimizzando il BI analitico, che
+    usa la risoluzione di $Y$ al prim'ordine. Quell'approssimazione è ottimista (BI Monte Carlo
+    /BI analitico $= 1.01$--$1.04$) e l'ottimizzatore la può sfruttare: lasciando libera la fase dei
+    filtri il BI analitico scendeva del 60\% mentre quello Monte Carlo \emph{saliva} del 149\%.
+    OPURA non ha un obiettivo da ottimizzare: la soglia si fissa direttamente sui singoli simulati.
+  \item \textbf{È derivato da un criterio, non scelto per ipotesi.} Il rapporto dei massimi è una
+    buona idea, ma è una scelta: l'addestramento trova il migliore \emph{fra i rapporti di due
+    massimi}. OPURA è ciò che il lemma di Neyman--Pearson prescrive per minimizzare il BI a
+    accettanza fissata (sezione~\ref{sec:media}): non c'è una famiglia di discriminanti dentro cui
+    potrebbe esistere un'alternativa migliore dello stesso tipo.
+  \item \textbf{Non satura a ritardi grandi.} Quando i due impulsi si separano, il massimo della
+    banda alta si aggancia all'impulso maggiore e $Y$ smette di migliorare con $\dt$. OPURA invece
+    cerca esplicitamente il secondo impulso e ne sfrutta tutto il rapporto segnale/rumore
+    (sezione~\ref{sec:limiti}): su ch31 WP7, fra 0.6 e 0.8~ms, la frazione di pile-up che sopravvive
+    scende dall'1.9\% di $Y$ allo 0.3\%. È da qui che viene il guadagno.
+  \item \textbf{Il guadagno non dipende dal conoscere la forma vera.} Usando nella verosimiglianza il
+    template che genera gli eventi invece dell'AP simulato il risultato è lo stesso (sezione
+    \ref{sec:risultati}).
+  \item \textbf{Ogni evento ha un significato.} $M$ è il logaritmo di un rapporto di verosimiglianze:
+    $M<0$ vuol dire ``più verosimile un singolo'', $M>0$ ``più verosimile un pile-up''. Come
+    sottoprodotto dà anche una stima di $\dt$ e $r$ dell'evento (la media pesata della somma).
+\end{enumerate}
+
+\noindent\textbf{Cosa costa.} Per evento, OPURA richiede $\sim$0.5~ms contro $\sim$0.4~ms del
+rapporto dei massimi: lo stesso ordine di grandezza, e nessun addestramento a monte. Le ipotesi
+(rumore gaussiano e stazionario, forma nota) sono quelle del filtro ottimo, e i pile-up oltre
+0.8~ms non li vede nessuno dei due metodi (sezione ``Ipotesi e limiti'').
+
+%==========================================================================================
 \section{Risultati}
 \label{sec:risultati}
 %==========================================================================================
-Riferimento: il rapporto dei massimi $Y$ con i filtri Wiener addestrati a 500 passi (campagna
-\texttt{\_swna1}).
-Per ciascuno stimatore il taglio accetta il 90\% dei singoli; le differenze sono misurate sugli
-\emph{stessi eventi}, con errore da bootstrap appaiato.
+\subsection{OPURA contro l'algoritmo con i filtri, Monte Carlo a 50 semi}
+\textbf{Cosa si confronta.} L'algoritmo con i filtri usa il kernel del filtro ottimo e due filtri di
+banda addestrati con l'algoritmo originale del paper (500 passi, learning rate costante, template
+AP simulato); il discriminante è il rapporto dei massimi $Y$. OPURA usa lo stesso template e la
+stessa NPS, senza addestramento. I due algoritmi sono applicati agli \emph{stessi eventi}: per ogni
+punto di lavoro 50 simulazioni indipendenti (semi 1234--1283), ciascuna con 50\,000 impulsi singoli
+e 50\,000 pile-up generati dal fit. Per ciascun algoritmo il taglio accetta il 90\% dei singoli.
 
+\textbf{Come si legge la tabella.} Per ogni seme si calcola
+$\Delta\mathrm{BI} = \mathrm{BI}_\text{OPURA}/\mathrm{BI}_\text{OF} - 1$; negativo vuol dire che
+OPURA rigetta di più. Si riporta la mediana sui 50 semi e, come incertezza, la \textbf{larghezza}
+$w = (P_{84}-P_{16})/2$ della distribuzione dei $\Delta$BI sui semi: di quanto cambia il risultato
+da una simulazione da 50\,000 eventi per popolazione all'altra. È l'incertezza di \emph{una}
+simulazione, e non si riduce aggiungendo semi. L'errore sulla sola mediana, che invece si riduce
+come $1/\sqrt{n}$~\cite{PDGMC}, sarebbe $\sqrt{\pi/2}\,w/\sqrt{50} \approx 0.18\,w$: la larghezza è
+la scelta più prudente. La distinzione è quella fra deviazione standard ed errore
+standard~\cite{AltmanBland2005}. Nessuno dei due numeri contiene le incertezze sistematiche
+(template, modello di rumore, variabilità dell'addestramento dei filtri: due addestramenti identici
+differivano fino al 2.7\% sul singolo punto), che per ora non sono stimate.
+
+\textbf{Il rapporto segnale/rumore} è quello del filtro ottimo,
+$\mathrm{SNR}_\mathrm{OF} = A/\sigma_\mathrm{OF}$, con $A$ l'ampiezza equivalente a un evento nella
+ROI e $\sigma_\mathrm{OF} = 1/\sqrt{\sum_k |S_k|^2/J_k}$ la risoluzione in ampiezza del filtro
+ottimo; per la~\eqref{eq:y} è $\sqrt{L_1}$ di un impulso singolo senza rumore.
+
+\begin{center}
+\small
+\begin{tabular}{rrrrccc}
+\toprule
+ch & WP & $V_\text{bias}$ [V] & SNR$_\mathrm{OF}$ & BI OF & BI OPURA & $\Delta$BI $\pm$ larghezza [\%] \\
+   &    &                     &                   & \multicolumn{2}{c}{[$10^{-5}$ cts/(keV kg yr)]} & \\
+\midrule
+31 & 1 & 0.6 & 23 & 9.21 & 9.16 & $-0.47 \pm 0.26$ \\
+31 & 3 & 1 & 25 & 5.20 & 5.09 & $-2.07 \pm 0.32$ \\
+31 & 5 & 1.4 & 24 & 4.97 & 4.85 & $-2.63 \pm 0.38$ \\
+31 & 7 & 1.8 & 20 & 6.67 & 6.51 & $-2.37 \pm 0.31$ \\
+31 & 9 & 2 & 20 & 6.78 & 6.62 & $-2.34 \pm 0.26$ \\
+31 & 11 & 3 & 21 & 6.93 & 6.80 & $-1.87 \pm 0.25$ \\
+31 & 13 & 4 & 21 & 7.69 & 7.64 & $-0.52 \pm 0.23$ \\
+31 & 15 & 5 & 21 & 7.30 & 7.23 & $-0.84 \pm 0.29$ \\
+31 & 17 & 6 & 21 & 6.86 & 6.78 & $-1.08 \pm 0.25$ \\
+31 & 19 & 8 & 22 & 6.32 & 6.23 & $-1.20 \pm 0.28$ \\
+31 & 21 & 10 & 23 & 6.31 & 6.22 & $-1.21 \pm 0.35$ \\
+31 & 23 & 20 & 24 & 5.42 & 5.31 & $-2.13 \pm 0.32$ \\
+31 & 25 & 26 & 23 & 5.59 & 5.48 & $-2.15 \pm 0.38$ \\
+31 & 27 & 30 & 22 & 5.71 & 5.59 & $-2.13 \pm 0.32$ \\
+31 & 29 & 40 & 22 & 5.43 & 5.29 & $-2.64 \pm 0.32$ \\
+\midrule
+34 & 1 & 0.6 & 40 & 20.43 & 20.00 & $-2.11 \pm 0.14$ \\
+34 & 3 & 1 & 61 & 17.77 & 17.52 & $-1.39 \pm 0.17$ \\
+34 & 5 & 1.4 & 81 & 15.54 & 15.37 & $-1.03 \pm 0.15$ \\
+34 & 7 & 1.8 & 90 & 14.07 & 13.95 & $-0.79 \pm 0.19$ \\
+34 & 9 & 2 & 97 & 13.18 & 13.11 & $-0.51 \pm 0.21$ \\
+34 & 11 & 3 & 91 & 11.54 & 11.49 & $-0.30 \pm 0.15$ \\
+34 & 13 & 4 & 119 & 10.29 & 10.28 & $-0.06 \pm 0.19$ \\
+34 & 15 & 5 & 124 & 9.41 & 9.41 & $-0.04 \pm 0.24$ \\
+34 & 17 & 6 & 141 & 8.87 & 8.88 & $+0.15 \pm 0.20$ \\
+34 & 19 & 8 & 150 & 8.18 & 8.19 & $+0.11 \pm 0.25$ \\
+34 & 21 & 10 & 135 & 7.80 & 7.82 & $+0.20 \pm 0.21$ \\
+34 & 23 & 20 & 126 & 6.81 & 6.82 & $+0.14 \pm 0.23$ \\
+34 & 25 & 26 & 116 & 6.57 & 6.58 & $+0.17 \pm 0.16$ \\
+34 & 27 & 30 & 100 & 6.31 & 6.32 & $+0.08 \pm 0.22$ \\
+34 & 29 & 40 & 90 & 6.32 & 6.33 & $+0.03 \pm 0.25$ \\
+\midrule
+71 & 1 & 0.6 & 28 & 14.25 & 14.12 & $-1.02 \pm 0.19$ \\
+71 & 3 & 1 & 35 & 6.92 & 6.82 & $-1.65 \pm 0.35$ \\
+71 & 5 & 1.4 & 35 & 10.04 & 10.00 & $-0.28 \pm 0.19$ \\
+71 & 7 & 1.8 & 33 & 9.65 & 9.65 & $-0.10 \pm 0.18$ \\
+71 & 9 & 2 & 32 & 9.75 & 9.75 & $-0.04 \pm 0.23$ \\
+71 & 11 & 3 & 36 & 8.50 & 8.51 & $+0.10 \pm 0.20$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig_opura_vs_of.pdf}
+  \caption{$\Delta$BI di OPURA rispetto all'algoritmo con i filtri, per i punti con tutti i 50 semi.
+  Barre: larghezza della distribuzione dei $\Delta$BI sui semi. (a)~In funzione della tensione di
+  polarizzazione. (b)~In funzione del rapporto segnale/rumore del filtro ottimo: il guadagno sta
+  tutto dove l'SNR è basso.}
+  \label{fig:opura_of}
+\end{figure}
+
+\textbf{Cosa dicono i numeri} (36 punti completi di 75: ch31 e ch34 interi, ch71 fino al WP 11;
+il resto della campagna è ancora in corso):
+\begin{itemize}
+  \item \textbf{OPURA è migliore in 28 punti su 36}, con mediana $-0.82\%$.
+  \item \textbf{Il guadagno dipende dal rapporto segnale/rumore} (figura~\ref{fig:opura_of}b): mediana
+    $-1.97\%$ per SNR$<30$ (16 punti), $-0.19\%$ fra 30 e 60 (6 punti), $-0.01\%$ sopra 60 (14 punti).
+    È quello che ci si aspetta dalla sezione~\ref{sec:limiti}: dove l'SNR è alto il rapporto dei
+    massimi è già vicino al limite e c'è poco da guadagnare.
+  \item \textbf{ch31} (SNR 20--25): OPURA è migliore in 15 punti su 15, fra $-0.47\%$ e $-2.64\%$
+    (mediana $-2.07\%$), in 14 punti oltre due larghezze. Il BI minimo scende da
+    $4.97\times10^{-5}$ a $4.85\times10^{-5}$ cts/(keV kg yr).
+  \item \textbf{ch34} (SNR 40--150): guadagno fino al 2.1\% ai WP bassi, dove l'SNR è ancora
+    moderato (5 punti oltre due larghezze). Dal WP 17 in su (SNR oltre 90) le differenze vanno da
+    $+0.03\%$ a $+0.20\%$, cioè OPURA leggermente peggiore, ma entro una larghezza in tutti i punti
+    tranne uno: compatibili con zero.
+  \item \textbf{ch71} (WP 1--11, SNR 28--36): migliore in 5 punti su 6, fino a $-1.65\%$.
+  \item Le larghezze sono 0.14--0.38\%: molto sotto i guadagni di ch31, confrontabili con le
+    differenze di ch34 ad alto SNR.
+\end{itemize}
+
+\subsection{Controlli precedenti su tre punti}
+Prima della campagna, OPURA era stato confrontato con i filtri Wiener addestrati (con penalità
+sulla risoluzione) su tre punti, con errore da bootstrap appaiato:
 \begin{center}
 \begin{tabular}{lrccc}
 \toprule
@@ -664,13 +806,9 @@ Ch34 WP15 & 124 & $-0.41 \pm 0.31\%$ & $-0.31 \pm 0.23\%$ & $-2.4\%$ \\
 \bottomrule
 \end{tabular}
 \end{center}
-
 \begin{itemize}
-  \item \textbf{Campione indipendente}: 30\,000 eventi per popolazione, semi diversi da quelli della
-    campagna. \textbf{Eventi della campagna}: il Monte Carlo ufficiale (seme 1234, 50\,000 eventi),
-    rigenerato; $Y$ ne riproduce il BI a tutte le cifre, quindi sono gli stessi eventi.
-  \item Il guadagno è $\sim$2\% dove l'SNR è basso e non misurabile dove è alto, dove $Y$ è già a meno
-    del 2.4\% dal limite.
+  \item Stessa tendenza della campagna: $\sim$2\% dove l'SNR è basso, niente di misurabile dove è
+    alto. Su ch31 WP7 la campagna dà $-2.37\%$ contro l'OF, in accordo con questi numeri.
   \item Usando nella verosimiglianza il template \emph{vero} (il fit che genera gli eventi) invece
     dell'AP simulato, il risultato non cambia ($-2.24$, $-1.72$, $-0.48\%$): il guadagno non viene
     dal conoscere la verità.
@@ -695,8 +833,9 @@ Ch34 WP15 & 124 & $-0.41 \pm 0.31\%$ & $-0.31 \pm 0.23\%$ & $-2.4\%$ \\
   \item Ampiezza e tempo sono profilati, non integrati: $M$ è un'approssimazione del test ottimo.
   \item La soglia si fissa su impulsi singoli simulati; sui dati reali andrebbe calibrata su un
     campione di singoli, come per $Y$.
-  \item I risultati sono su tre punti di lavoro: per un numero da tesi va ripetuto su tutti i canali
-    e punti di lavoro con il Monte Carlo a 50 semi.
+  \item La campagna a 50 semi copre per ora 36 punti di 75: mancano ch71 dal WP 13, ch83 e ch91.
+  \item Le incertezze riportate sono solo statistiche: le sistematiche (template, rumore,
+    addestramento dei filtri) non sono ancora stimate.
 \end{itemize}
 
 %==========================================================================================
@@ -770,6 +909,10 @@ spesso $H_0$ quando è vera $H_1$.
 \bibitem{Chernyak2012} D.~M.~Chernyak \emph{et al.}, \emph{Random coincidence of $2\nu2\beta$ decay
   events as a background source in bolometric $0\nu2\beta$ decay experiments}, Eur.\ Phys.\ J.\ C
   \textbf{72} (2012) 1989.
+\bibitem{PDGMC} G.~Cowan, \emph{Monte Carlo techniques}, in Particle Data Group, Review of
+  Particle Physics (2023), sez.~42.5, eq.~(42.11).
+\bibitem{AltmanBland2005} D.~G.~Altman, J.~M.~Bland, \emph{Standard deviations and standard errors},
+  BMJ \textbf{331} (2005) 903.
 \end{thebibliography}
 
 \end{document}
