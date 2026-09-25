@@ -62,7 +62,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 # MODALITA': da dove viene il TEMPLATE, e quali canali elaborare
 # ═════════════════════════════════════════════════════════════════════════════
 # TEMPLATE_SOURCE = "root" -> medianAP di Octopus dal file ROOT (comportamento originale).
-# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da simulate_BI_error_m205.py --make-ap
+# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da build_simAP_injected_m205.py
 #   (m205_AP_sim/ch<ch>/simAP_ch<ch>_wp<wp>.npy): stessa forma dell'AP vero ma con una
 #   REALIZZAZIONE DIVERSA del rumore di template. Addestrando qui e valutando su eventi generati
 #   dall'AP vero si rompe l'auto-consistenza (cfr. paper, sez. 4.5).
@@ -117,14 +117,9 @@ def sim_folder_tag(tag):
     return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
 
 
-# Suffisso libero per lanci di PROVA (es. "_hist"): cambia la cartella dei risultati, cosi' un
-# ri-addestramento NON sovrascrive i filtri di una campagna gia' usata dal Monte Carlo (f1 e f2
-# partono da un'inizializzazione casuale: riaddestrando si ottengono filtri diversi). "" = normale.
-RUN_TAG = "_hist"
-
 _TAG        = ({"root": "", "fit": "_fit",
                 "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
-               + ("_npsclean" if NPS_SOURCE == "clean" else "") + RUN_TAG)
+               + ("_npsclean" if NPS_SOURCE == "clean" else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -361,13 +356,9 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         shared["t_torch"], shared["r_torch"], nps_torch,
         signal_amp_torch, shared["ratio_distribution_torch"],
         N_sigma = shared["N_sigma"],
-        activation_fct = torch.abs,
-        f1_init = None,
-        f2_init = None,
         n_trials = N_TRIALS,
-        use_interp = True,
         verbose = False,
-    )
+    )                                      # algoritmo originale dell'autore (vedi src/analysis.py)
     train_s = time.perf_counter() - t_train
 
     BI_estimate = float(J_values[-1]) * fn.K
@@ -392,8 +383,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         # Filtri di banda e kernel (qui il filtro ottimo H_unit), salvati a parte
         # come .npy in FILTERS_DIR; non entrano nel BI CSV (append_row_to_csv tiene
         # solo CSV_FIELDNAMES). Filtro totale applicato ai dati: g_i = f_i * H_unit.
-        "f1": f1_opt.detach().cpu().numpy(),
-        "f2": f2_opt.detach().cpu().numpy(),
+        "f1": f1_opt,          # gia' numpy, |f| normalizzato
+        "f2": f2_opt,
         "kernel": np.asarray(H_unit),
     }
 
