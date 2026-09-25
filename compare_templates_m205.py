@@ -75,7 +75,7 @@ SLIDE = True             # True  -> figura PER SLIDE: un pannello BI grande + un
                          #          font e marker grandi, niente z ne' note fitte (plot_bi_slide);
                          #          la griglia dei filtri non viene disegnata (non e' roba da slide).
                          # False -> figura da DOCUMENTO: 3 pannelli (BI, z, Delta BI) fitti (plot_bi).
-ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] = tutti quelli
+ONLY_CHANNELS = [31, 34]     # lista di canali da disegnare, es. [34, 91]; None/[] = tutti quelli
                          # presenti nei CSV dei set
 
 # QUALE campagna Monte Carlo leggere. Nel CSV di una cartella convivono piu' campagne, una
@@ -86,7 +86,7 @@ ONLY_CHANNELS = None     # lista di canali da disegnare, es. [34, 91]; None/[] =
 MC_GEN = "fit"           # "root" | "fit"
 # File del Monte Carlo: quello a seed singolo, oppure quello a piu' seed scritto da
 # simulate_BI_error con N_SEEDS > 1 (serve per l'errore APPAIATO su Delta BI, vedi paired).
-MC_CSV = "BI_mc_error_m205.csv"     # | "BI_mc_error_m205.csv" (un seed)
+MC_CSV = "BI_mc_error_m205_seeds50.csv"     # | "BI_mc_error_m205.csv" (un seed)
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
 # Target CUPID sul pile-up: meta' del budget totale di 1e-4 counts/(keV kg yr).
 # Disegnato in tutti i pannelli che mostrano il BI. None per non disegnarlo.
