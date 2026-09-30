@@ -6,6 +6,7 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{xcolor}
 \usepackage[hidelinks]{hyperref}
 \usepackage{tcolorbox}
@@ -712,13 +713,15 @@ $\mathrm{SNR}_\mathrm{OF} = A/\sigma_\mathrm{OF}$, con $A$ l'ampiezza equivalent
 ROI e $\sigma_\mathrm{OF} = 1/\sqrt{\sum_k |S_k|^2/J_k}$ la risoluzione in ampiezza del filtro
 ottimo; per la~\eqref{eq:y} è $\sqrt{L_1}$ di un impulso singolo senza rumore.
 
-\begin{center}
-\small
-\begin{tabular}{rrrrccc}
+{\small
+\begin{longtable}{rrrrccc}
 \toprule
 ch & WP & $V_\text{bias}$ [V] & SNR$_\mathrm{OF}$ & BI OF & BI OPURA & $\Delta$BI $\pm$ larghezza [\%] \\
    &    &                     &                   & \multicolumn{2}{c}{[$10^{-5}$ cts/(keV kg yr)]} & \\
 \midrule
+\endhead
+\bottomrule
+\endfoot
 31 & 1 & 0.6 & 23 & 9.21 & 9.16 & $-0.47 \pm 0.26$ \\
 31 & 3 & 1 & 25 & 5.20 & 5.09 & $-2.07 \pm 0.32$ \\
 31 & 5 & 1.4 & 24 & 4.97 & 4.85 & $-2.63 \pm 0.38$ \\
@@ -757,38 +760,86 @@ ch & WP & $V_\text{bias}$ [V] & SNR$_\mathrm{OF}$ & BI OF & BI OPURA & $\Delta$B
 71 & 7 & 1.8 & 33 & 9.65 & 9.65 & $-0.10 \pm 0.18$ \\
 71 & 9 & 2 & 32 & 9.75 & 9.75 & $-0.04 \pm 0.23$ \\
 71 & 11 & 3 & 36 & 8.50 & 8.51 & $+0.10 \pm 0.20$ \\
-\bottomrule
-\end{tabular}
-\end{center}
+71 & 13 & 4 & 41 & 7.34 & 7.36 & $+0.12 \pm 0.20$ \\
+71 & 15 & 5 & 37 & 7.95 & 7.97 & $+0.42 \pm 0.19$ \\
+71 & 17 & 6 & 38 & 7.00 & 7.03 & $+0.40 \pm 0.13$ \\
+71 & 19 & 8 & 39 & 6.62 & 6.64 & $+0.44 \pm 0.21$ \\
+71 & 21 & 10 & 37 & 5.98 & 6.01 & $+0.49 \pm 0.16$ \\
+71 & 23 & 20 & 42 & 4.67 & 4.68 & $+0.22 \pm 0.29$ \\
+71 & 25 & 26 & 42 & 4.54 & 4.56 & $+0.33 \pm 0.23$ \\
+71 & 27 & 30 & 43 & 4.52 & 4.53 & $+0.37 \pm 0.27$ \\
+71 & 29 & 40 & 43 & 4.47 & 4.48 & $+0.30 \pm 0.23$ \\
+\midrule
+83 & 1 & 0.6 & 40 & 16.12 & 15.92 & $-1.20 \pm 0.19$ \\
+83 & 3 & 1 & 51 & 13.77 & 13.68 & $-0.68 \pm 0.18$ \\
+83 & 5 & 1.4 & 59 & 12.03 & 11.97 & $-0.44 \pm 0.17$ \\
+83 & 7 & 1.8 & 64 & 10.72 & 10.68 & $-0.36 \pm 0.19$ \\
+83 & 9 & 2 & 67 & 10.12 & 10.08 & $-0.40 \pm 0.25$ \\
+83 & 11 & 3 & 76 & 8.94 & 8.92 & $-0.13 \pm 0.23$ \\
+83 & 13 & 4 & 78 & 8.18 & 8.16 & $-0.21 \pm 0.24$ \\
+83 & 15 & 5 & 80 & 7.64 & 7.63 & $-0.19 \pm 0.25$ \\
+83 & 17 & 6 & 78 & 7.32 & 7.30 & $-0.14 \pm 0.22$ \\
+83 & 19 & 8 & 82 & 6.49 & 6.46 & $-0.32 \pm 0.26$ \\
+83 & 21 & 10 & 82 & 6.35 & 6.33 & $-0.20 \pm 0.22$ \\
+83 & 23 & 20 & 72 & 6.11 & 6.11 & $-0.00 \pm 0.21$ \\
+83 & 25 & 26 & 65 & 6.08 & 6.08 & $-0.00 \pm 0.18$ \\
+83 & 27 & 30 & 62 & 5.99 & 5.98 & $-0.03 \pm 0.19$ \\
+83 & 29 & 40 & 58 & 5.64 & 5.64 & $-0.08 \pm 0.18$ \\
+\midrule
+91 & 1 & 0.6 & 29 & 12.21 & 11.86 & $-2.83 \pm 0.31$ \\
+91 & 3 & 1 & 32 & 14.60 & 14.37 & $-1.56 \pm 0.22$ \\
+91 & 5 & 1.4 & 33 & 14.88 & 14.68 & $-1.37 \pm 0.20$ \\
+91 & 7 & 1.8 & 34 & 14.59 & 14.41 & $-1.25 \pm 0.23$ \\
+91 & 9 & 2 & 33 & 14.40 & 14.21 & $-1.35 \pm 0.20$ \\
+91 & 11 & 3 & 28 & 13.83 & 13.63 & $-1.42 \pm 0.19$ \\
+91 & 13 & 4 & 26 & 13.89 & 13.67 & $-1.62 \pm 0.18$ \\
+91 & 15 & 5 & 25 & 14.03 & 13.81 & $-1.55 \pm 0.21$ \\
+91 & 17 & 6 & 24 & 14.37 & 14.13 & $-1.67 \pm 0.20$ \\
+91 & 19 & 8 & 20 & 14.82 & 14.52 & $-2.00 \pm 0.19$ \\
+91 & 21 & 10 & 18 & 15.29 & 14.97 & $-2.13 \pm 0.29$ \\
+91 & 23 & 20 & 15 & 15.86 & 15.45 & $-2.48 \pm 0.29$ \\
+91 & 25 & 26 & 13 & 16.58 & 16.12 & $-2.76 \pm 0.29$ \\
+91 & 27 & 30 & 12 & 16.96 & 16.35 & $-3.72 \pm 0.32$ \\
+91 & 29 & 40 & 11 & 16.63 & 16.05 & $-3.53 \pm 0.31$ \\
+\end{longtable}}
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{fig_opura_vs_of.pdf}
-  \caption{$\Delta$BI di OPURA rispetto all'algoritmo con i filtri, per i punti con tutti i 50 semi.
+  \caption{$\Delta$BI di OPURA rispetto all'algoritmo con i filtri, sui 75 punti della campagna.
   Barre: larghezza della distribuzione dei $\Delta$BI sui semi. (a)~In funzione della tensione di
   polarizzazione. (b)~In funzione del rapporto segnale/rumore del filtro ottimo: il guadagno sta
   tutto dove l'SNR è basso.}
   \label{fig:opura_of}
 \end{figure}
 
-\textbf{Cosa dicono i numeri} (36 punti completi di 75: ch31 e ch34 interi, ch71 fino al WP 11;
-il resto della campagna è ancora in corso):
+\textbf{Cosa dicono i numeri} (campagna completa: 75 punti, 5 canali per 15 punti di lavoro):
 \begin{itemize}
-  \item \textbf{OPURA è migliore in 28 punti su 36}, con mediana $-0.82\%$.
-  \item \textbf{Il guadagno dipende dal rapporto segnale/rumore} (figura~\ref{fig:opura_of}b): mediana
-    $-1.97\%$ per SNR$<30$ (16 punti), $-0.19\%$ fra 30 e 60 (6 punti), $-0.01\%$ sopra 60 (14 punti).
-    È quello che ci si aspetta dalla sezione~\ref{sec:limiti}: dove l'SNR è alto il rapporto dei
-    massimi è già vicino al limite e c'è poco da guadagnare.
+  \item \textbf{OPURA è migliore in 58 punti su 75}, con mediana $-0.51\%$.
+  \item \textbf{Il guadagno sta dove il rapporto segnale/rumore è basso}
+    (figura~\ref{fig:opura_of}b): mediana $-2.07\%$ per SNR$<30$ (27 punti), $-0.08\%$ fra 30 e 60
+    (23 punti), $-0.13\%$ sopra 60 (25 punti). È quello che ci si aspetta dalla
+    sezione~\ref{sec:limiti}: dove l'SNR è alto il rapporto dei massimi è già vicino al limite.
   \item \textbf{ch31} (SNR 20--25): OPURA è migliore in 15 punti su 15, fra $-0.47\%$ e $-2.64\%$
-    (mediana $-2.07\%$), in 14 punti oltre due larghezze. Il BI minimo scende da
-    $4.97\times10^{-5}$ a $4.85\times10^{-5}$ cts/(keV kg yr).
+    (mediana $-2.07\%$), in 14 punti oltre due larghezze.
+  \item \textbf{ch91} (SNR 11--34, il canale più rumoroso): migliore in 15 punti su 15, tutti oltre
+    due larghezze, fra $-1.25\%$ e $-3.72\%$ (mediana $-1.67\%$). Il guadagno cresce lungo la curva
+    di carico man mano che l'SNR scende: $-3.5\%$ a SNR 11.
+  \item \textbf{ch83} (SNR 40--82): migliore in 15 punti su 15, ma di poco: fra $0.00\%$ e
+    $-1.20\%$ (mediana $-0.20\%$), oltre due larghezze solo in 3 punti.
   \item \textbf{ch34} (SNR 40--150): guadagno fino al 2.1\% ai WP bassi, dove l'SNR è ancora
     moderato (5 punti oltre due larghezze). Dal WP 17 in su (SNR oltre 90) le differenze vanno da
-    $+0.03\%$ a $+0.20\%$, cioè OPURA leggermente peggiore, ma entro una larghezza in tutti i punti
-    tranne uno: compatibili con zero.
-  \item \textbf{ch71} (WP 1--11, SNR 28--36): migliore in 5 punti su 6, fino a $-1.65\%$.
-  \item Le larghezze sono 0.14--0.38\%: molto sotto i guadagni di ch31, confrontabili con le
-    differenze di ch34 ad alto SNR.
+    $+0.03\%$ a $+0.20\%$, entro una larghezza in tutti i punti tranne uno: compatibili con zero.
+  \item \textbf{ch71} (SNR 28--43) \textbf{è l'eccezione}: OPURA è migliore ai WP bassi (fino a
+    $-1.65\%$), ma dal WP 11 in su è \emph{peggiore}, fra $+0.10\%$ e $+0.49\%$, oltre una larghezza
+    in 7 punti e oltre due in 4 (WP 15--21). La causa non è stata verificata: le candidate sono
+    l'approssimazione di ampiezza e tempo fittati invece che mediati e la differenza fra il
+    template di OPURA (AP simulato) e quello che genera gli eventi.
+  \item \textbf{Il BI più basso} è su ch71 al WP 29 (40~V): $4.47\times10^{-5}$ con i filtri,
+    $4.48\times10^{-5}$ con OPURA. Sotto l'obiettivo di $5\times10^{-5}$ cts/(keV kg yr) stanno 5
+    punti, gli stessi per i due algoritmi: ch31 WP 5 e ch71 WP 23--29.
+  \item Le larghezze sono 0.13--0.38\%: molto sotto i guadagni di ch31 e ch91, confrontabili con
+    le differenze di ch34, ch71 e ch83.
 \end{itemize}
 
 \subsection{Controlli precedenti su tre punti}
@@ -833,7 +884,6 @@ Ch34 WP15 & 124 & $-0.41 \pm 0.31\%$ & $-0.31 \pm 0.23\%$ & $-2.4\%$ \\
   \item Ampiezza e tempo sono profilati, non integrati: $M$ è un'approssimazione del test ottimo.
   \item La soglia si fissa su impulsi singoli simulati; sui dati reali andrebbe calibrata su un
     campione di singoli, come per $Y$.
-  \item La campagna a 50 semi copre per ora 36 punti di 75: mancano ch71 dal WP 13, ch83 e ch91.
   \item Le incertezze riportate sono solo statistiche: le sistematiche (template, rumore,
     addestramento dei filtri) non sono ancora stimate.
 \end{itemize}

@@ -15,7 +15,251 @@ PRECISELY, with sources, and every claim checked on the Monte Carlo, never on th
 
 ---
 
-## ★ STATE ON 2026-09-23 — START HERE (last commit `a06d0bd`, pushed)
+## ★★ 2026-09-29 — WRITING TASK: the pile-up abstract and Chapter 4 (START HERE)
+
+**Goal.** Write the pile-up paragraph of the thesis ABSTRACT and fill Chapter 4, following the
+skeleton agreed with the relatore (below). The thesis is in English, LaTeX, at
+`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/`: `main.tex`, `Abstract/abstract.tex`
+(EMPTY: only the \chapter* header), `Chapter4/chapter4.tex` ("Pile-up Rejection", 881 lines).
+In chapter4.tex, Sec. 4.1 (the paper's algorithm) is WRITTEN (lines ~16-785); everything after
+line 786 is an OUTLINE in comments, tagged [PAPER] / [OURS]. Bibliography: `references.bib`
+(the paper is key `Berest2026`). Paper PDF: `MasterThesis___Alberto_Zanelli/Pileup_Paper_EPJC-2.pdf`.
+The long technical derivation of the likelihood method, in Italian, with code excerpts, results
+and sources: `PileUp/tesi_note/stimatore_verosimiglianza.tex` (+ `.pdf`, copy in the thesis folder).
+
+**⚠ STALE NUMBERS in chapter4.tex's outline comments — do NOT copy them:** "W/OF median 0.992
+(49/75), regularized 0.983 (67/75); >= 10 V: -3.5% (25/25)" and "MC/an 1.004-1.034" come from the
+old OF campaign trained for 300 steps against Wiener's 500 (an artefact, see "READ THIS FIRST").
+"target reached only by ch71 at 20-40 V" is also from that campaign: re-check on the new one.
+
+### The skeleton, point by point: message, numbers, figures, files
+All BI in counts/(keV kg yr). "MC" = Monte Carlo BI (the one to quote, like the paper). Paths are
+relative to `PileUp/` unless stated.
+
+**4.1 Description of the algorithm (elaboration of the paper)** — already written in chapter4.tex.
+- Two band filters f1, f2 applied on top of the OF kernel H = S*/NPS; discriminant Y = ratio of
+  the two maxima; filters trained by minimising the ANALYTIC misidentification J at 90% acceptance
+  of singles (first-order propagation of the noise on Y); BI = K (1 - r_p).
+- K (`utility/functions.py`): activity 2.94e-3 Bq, LMO mass 0.28 kg, probability 3.41e-4, pile-up
+  window 0.8 ms -> only pile-ups with Δt < 0.8 ms enter the BI.
+- Our code = the author's code VERBATIM since 2026-09-24 (Adam lr 1e-2 constant, 500 steps, |f|,
+  plain max). One deliberate deviation: sigma_Y is the author's / sqrt(2) (the author has /2 in the
+  variances and x2 in sigma); ours is the one validated on the MC.
+- Paper facts (checked in the PDF): it uses ONLY the optimum filter; analytic vs simulated BI
+  < 8%, they quote the simulated one; statistical uncertainty quoted as "±0.1 [1e-5] for all
+  detectors" with no method; the template is the main systematic (up to 13%).
+
+**4.2 Start from OF and paper — hallucination, AP vs FIT**
+- Message: a template averaged over few pulses carries a deterministic noise imprint; the
+  training learns it and the ANALYTIC BI promises a gain that the MC does not confirm.
+- Templates: real AP = Octopus median of 36-39 LED pulses per WP (reproduced bit-exact from the
+  raw binary); fit = 7 poles x 6th-order Bessel at 2.5 kHz (denoised; poles not physical); simulated
+  AP `APsimfit10000led` = 10 000 pulses generated from the fit at the LED amplitude + NPS noise,
+  averaged, peak-normalised (same construction and sigma/A as the real AP, negligible noise).
+  At the ROI amplitude the simulated AP was noisier than the real one (raw SNR 2.6-17): don't.
+- Numbers (OLD OF code, 300 steps, single seed — fine as illustration, say so):
+  OF trained on the real AP vs on the fit, events always from the fit: analytic BI root/fit 0.994
+  (promises 0.6% better), MC 1.004 (worse in 50/75 points); MC/an 1.023 [0.81-1.19] vs 1.013
+  [0.99-1.11]. The effect is much stronger for the trainable Wiener (see 4.4): ch91 without
+  penalty MC/an 1.20 and 12% worse than OF; APsimfit10000 at ROI amplitude W/OF 1.010, MC/an up to 1.21.
+- Extreme case (measured, ch34 wp15): freeing the phase of the band filters, the analytic BI goes
+  -60% while the MC BI goes +149% -> the analytic metric can be gamed; always conclude on the MC.
+- Figures: `comparisons/OF-root_vs_OF-fit/`, `slides_figures/fig07_overtraining.png`.
+
+**4.3 Pipeline for BI extraction (analytic vs simulation, pipeline, OF result on the load curve)**
+- Inputs per (channel, WP): ROI amplitude = LED amplitude / 430.9 (`amplitudes_m205.csv`);
+  clean NPS measured from raw noise windows (Octopus "medianpower" is 1.386x the true E|FFT|^2 ->
+  replaced; the clean one reproduces the RMS of independent windows to 0.4%); template
+  `APsimfit10000led`. Channels 31, 34, 71, 83, 91 (those with a template fit), 15 WP each.
+- MC: events generated from the FIT (truth), Gaussian noise from the NPS (verified: the spread of
+  the OF amplitude on simulated singles equals sigma_OF within 1%); per seed 50 000 singles +
+  50 000 pile-ups, Δt uniform in [0, 0.8] ms, r from the 2νββ energy-sharing distribution; cut at
+  90% of singles; 50 independent seeds; all algorithms on the SAME events (paired comparison =
+  "common random numbers").
+- Analytic vs MC for the new OF (75 points): MC/an median 1.039, range 1.017-1.129; per channel
+  ch31 1.078, ch34 1.021, ch71 1.038, ch83 1.030, ch91 1.041.
+- SNR used everywhere = SNR_OF = A / sigma_OF, sigma_OF = 1/sqrt(sum |S|^2/NPS) (10-150: ch31
+  20-25, ch34 40-150, ch71 ~30). NOT the raw peak/RMS SNR, which is 3-14 on the simulated pulses
+  (OF gain 2x on ch31 up to 11x on ch34). Always write SNR_OF.
+- Uncertainties: see "Error bars" below — the choice must be stated.
+- Results with OF on the load curve (NEW OF, original algorithm, 50 seeds, campaign COMPLETE:
+  75/75 points, pulled 2026-09-30). BI min - max per channel, with SNR_OF range:
+  ch31 (SNR 20-25) 4.97e-5 (WP5, 1.4 V) - 9.21e-5; ch34 (40-150) 6.31e-5 (WP27, 30 V) - 2.04e-4;
+  ch71 (28-43) 4.47e-5 (WP29, 40 V) - 1.42e-4; ch83 (40-82) 5.64e-5 (WP29) - 1.61e-4;
+  ch91 (11-34) 1.22e-4 (WP1, 0.6 V) - 1.70e-4. Below the 5e-5 target: 5 points, ch31 WP5 and ch71
+  WP23-29 (20-40 V). Per-point table: tesi_note/stimatore_verosimiglianza.tex, Sec. 11.
+- Figures: `comparisons/OF-APsimfit10000led_vs_M-APsimfit10000led/slide_BI-channels_*.png`,
+  `slide_BI-mc+analytic_ch*_inj-fit.png` (BI vs V with CUPID target), `slides_figures/fig01-fig13`
+  (spectrum, pile-up pulses, ingredients, model, discriminator, BI vs V, MC event, filtered event).
+
+**4.4 The Wiener-filter method**
+- 4.4.1 WF: W_λ = S*/(|S|^2 + λ NPS), a port of the CUORE WienerFilter (`compute_W` /
+  `compute_W_torch` in src/analysis.py; |S|^2 and NPS first normalised to equal power, CUORE
+  NormType 0; output peak-normalised like CUORE's `conv`): λ -> ∞ gives the OF shape S*/NPS,
+  λ -> 0 deconvolution 1/S (sharper pulse, more noise), λ = 1 the standard Wiener filter. λ = exp(log λ) trained together
+  with f1, f2 on the same analytic cost.
+- RELATORE'S ADVICE (2026-09-30) for 4.4.2-4.4.4: present the regularisation INSIDE the training
+  section, as part of the algorithm's definition (the final Wiener algorithm IS the regularised
+  one), with ONE short example of the unregularised training (ch91: BI +13% vs the original
+  algorithm, median over 15 WPs) and no separate study; in all comparisons "the Wiener filter"
+  means the regularised one.
+- 4.4.2-4.4.4 Why regularisation, and which: without constraint λ collapses where SNR is low and
+  the filter exploits the template noise (ch91: MC/an 1.20, W 12% worse than OF). Penalty
+  w (s1^2 + s2^2), s_i = sigma_i/mu_i, w = 1, training loss only -> MC/an <= 1.036 everywhere.
+  Validation vs training response (MC BI computed during training every 25 steps): ch34 wp15,
+  MC/an stays 0.986-1.011 over the whole run, no overtraining; the best MC point is the last one;
+  the penalty gains ~0.75% on the MC (single seed, ~2σ: suggestive only).
+  Figures: `validation_curve_ch34_wp15_penalty_vs_none.png` (+ `_swna1`, `_nopen`, ch91 ones),
+  `slides_figures/fig08_regularization.png`,
+  `m205_results_wiener_APsimfit10000led_npsclean_swna1/training_convergence_ch*.png` (loss and λ).
+- 4.4.5-4.4.8 Compare OF and WF — THE result of this part, all measured:
+  * Equal training (500 steps each), same events: ΔBI_MC Wwna vs OF = ch31 -0.60% (15/15),
+    ch91 -0.43% (10/15), ch34/71/83 ≈ 0.
+  * Same filter family: the ratio H/W is real and positive at every frequency, so f1, f2 absorb it.
+    Each trained Wiener filter rewritten as an OF band filter (f_OF = f_W W/H) gives the same J to
+    <= 2e-4 on 45/45 points (ch31, 34, 91). λ is not identifiable: rescaling λ by x0.1-x100 with the
+    compensating f leaves J unchanged to 1e-6.
+  * Where the residual gain comes from (ablation, ch31 wp7, paired, `test/ablation_of_vs_wiener_m205.py`):
+    of the -1.79 ± 0.38% campaign gain, -1.38 ± 0.35% is the learning-rate schedule (the old OF
+    decayed to 1e-5); at EQUAL schedule Wwna vs OF = +0.43 ± 0.21% (decaying) / -0.06 ± 0.18%
+    (constant), two points. λ growing = the optimiser walking back to the OF kernel
+    (W -> S*/(λ NPS) ∝ H), driven by the penalty. => adding λ is superfluous.
+  * Fixing λ = 1 (ch34): analytic -1.3/-1.5% but MC +0.5/+0.6%, worse than OF in 14/15 points.
+  * Figures: `ablation_ch31_wp7.png`, `ablation_2x2_schedule_vs_model.png`.
+- 4.4.9 Next steps: a different characterisation of λ / a new weighted-filter definition; an
+  L-curve for the penalty weight w (instead of "w = 1"); train on a differentiable surrogate of
+  the MC survival, since the analytic metric is what gets gamed.
+
+**4.5 Likelihood-ratio approach (OPURA, Optimum Pile-Up Rejection Algorithm; statistic M)**
+- Method (full derivation + code: `tesi_note/stimatore_verosimiglianza.tex`; code
+  `src/pileup_likelihood.py`, ~0.5 ms/event): it is a χ² fit in frequency space (X_k with variance
+  NPS_k, independent by stationarity). For each event: best single-pulse fit (the OF), best
+  two-pulse fit for every (Δt, r) on a grid (81 x 19), and
+  M = log Σ π(Δt, r) exp[(L(Δt, r) - L1)/2] — amplitude and time FITTED (profiled), Δt and r
+  AVERAGED with their true distribution. Neyman-Pearson: the BI is an average over pile-ups, so
+  the most powerful test at fixed singles acceptance is the likelihood ratio against the mixture.
+  The name "optimum" = derived from NP under the model assumptions, like the optimum filter; the
+  only approximation is profiling A and t instead of averaging them. No training at all.
+- Headroom measured before designing it: Y is within 2-5% of the clairvoyant NP limit; on ch31
+  78% of the BI comes from Δt < 0.2 ms, unresolvable at this SNR by any estimator; more SNR is
+  worth far more (√2 SNR -> -18...-23% on the limit).
+- Results (50 seeds, 75/75 points, errors = width of the seed distribution):
+  OPURA better in 58/75, median -0.51%; by SNR_OF: < 30 -> -2.07% (27 pts), 30-60 -> -0.08% (23),
+  > 60 -> -0.13% (25).
+  ch31: better in 15/15, -0.47 to -2.64% (median -2.07%), 14/15 beyond two widths.
+  ch91 (lowest SNR): 15/15, ALL beyond two widths, -1.25 to -3.72% (median -1.67%), growing as the
+  SNR drops along the load curve (-3.5% at SNR_OF 11).
+  ch83: 15/15 but small, 0.00 to -1.20% (median -0.20%), 3 beyond two widths.
+  ch34: up to -2.1% at low WP; WP >= 17 (SNR_OF > 90) +0.03 to +0.20%, compatible with zero.
+  ch71 is the EXCEPTION: better at WP 1-9 (up to -1.65%), WORSE from WP 11 on, +0.10 to +0.49%,
+  beyond one width in 7 points and two widths in 4 (WP 15-21); cause not verified.
+  Lowest BI: ch71 WP29, 4.47e-5 (filters) vs 4.48e-5 (OPURA); the same 5 points are below target
+  for both. Earlier 3-point check vs the Wiener filters: -2.32, -1.75, -0.41%; same result with the
+  TRUE template in the likelihood (the gain is not "knowing the truth").
+- Where the gain comes from: Y saturates once the pulses separate (the high-band max locks on
+  the larger pulse); M looks for the second pulse explicitly. ch31 wp7, Δt 0.6-0.8 ms: survival
+  1.9% (Y) -> 0.3% (M). Figure `tesi_note/fig_M_survival_ch31_wp7.pdf`.
+- Advantages vs the filter algorithm (Sec. 10 of the note): no training (no init/lr/steps; the
+  filters vary up to 2.7% on a single point between two identical trainings); does not use the
+  gameable analytic BI; derived from a criterion; no saturation at large Δt; per-event meaning
+  (log Bayes factor, M < 0 = "looks single") and Δt, r estimates as a by-product.
+- Limits: pile-ups with Δt > 0.8 ms are not seen by either method (ch31 r = 0.5: rejection 100% at
+  1 ms, 35% at 2 ms; ch34 holds to 5 ms) — consistent with K counting only Δt < 0.8 ms, but it
+  assumes something else removes them; Gaussian stationary noise; A and t profiled.
+- Next steps: include non-idealities, e.g. the trigger TIME JITTER (the relatore's suggestion)
+  and the amplitude spread; the exact test averaging A and t as well (measured, averaging with A
+  free: -1.77 ± 0.19% vs M on ch91 wp15, -0.28 ± 0.20% ch31 wp7, -0.13 ± 0.11% ch34 wp15;
+  with A KNOWN -6/-5/-1.4% but only because the MC has no amplitude spread — not quotable);
+  extend Δt beyond 0.8 ms; literature check before calling it new.
+- Figures: `tesi_note/fig_opura_vs_of.pdf` (ΔBI vs V_bias and vs SNR_OF, regenerate with
+  `python tesi_note/fig_opura_vs_of.py` when the campaign ends — it also prints the LaTeX table
+  rows), `likelihood_explained_ch31_wp7_r0.3_dt0.4ms.png` (one event step by step,
+  `show_likelihood_m205.py`), `comparisons/OF-APsimfit10000led_vs_M-APsimfit10000led/dist_*.png`.
+
+### Data audit against the skeleton (2026-09-30)
+| skeleton item | data | status |
+|---|---|---|
+| 4.1 algorithm | text written in chapter4.tex | OK |
+| 4.2 hallucination AP/FIT | OF trained on real AP (`m205_results_octopus_npsclean`) and on fit (`m205_results_octopus_fit_npsclean`), 75 pts, MC 1 seed; figures `comparisons/OF-root_vs_OF-fit/` | usable, but OLD training code (300 steps, cosine lr) — not the algorithm of 4.3 |
+| 4.3 analytic vs MC, OF on LC | `m205_results_octopus_APsimfit10000led_npsclean`: 75 pts, 50 seeds, analytic + MC | OK, complete |
+| 4.4.2 training curves | loss and λ per step: `..._swna1/training_history`, `training_convergence_ch*.png` | OK |
+| 4.4.3 validation vs training | `validation_curve_ch34_wp15_*`, `ch91_wp15_*` | OK, but 2 points, 1 seed |
+| 4.4.3 why regularisation | W without penalty, `m205_results_wiener_APsimfit10000led_npsclean`, 75 pts, 50 seeds | OK: vs the new OF, WORSE in 75/75, median +1.05% (ch91 +13.0%, up to +41%), 72 points beyond two widths |
+| 4.4.5 compare OF and WF | Wwna with 50 seeds = `m205_results_wiener_APsimfit10000led_npsclean_swna1` (moved back from scarti on 2026-09-30, see below). SAME events as the new OF: regenerating seeds 1234 and 1240 of ch31 wp7 with CHUNK 500 reproduces its CSV to all digits (the frozen script copy in the folder says CHUNK 2000, but that is another launch) | OK: Wwna vs new OF, 75 pts x 50 seeds paired: median +0.30%, Wiener better in 11/75 and NEVER beyond two widths, worse beyond two widths in 28; per channel +0.24 / +0.31 / +0.29 / +0.42 / +0.06% (ch31/34/71/83/91). Caveat: one training each, Wwna trained with the interpolated peak, OF with plain max |
+| 4.4.6-7 λ explodes, WF -> OF | family reach 45/45, λ gauge 1e-6, ablation figures | numbers only in this file; `test/check_family_reach_m205.py` no longer runs (compute_J lost `use_interp`); `test/ablation_of_vs_wiener_m205.py` still runs |
+| 4.4.8 fixing λ | `scarti/..._lam1_hist`, `..._swna1_lam1_hist` | ch34 ONLY (15 pts, 1 seed) |
+| 4.5 OF vs LR | `m205_results_likelihood_APsimfit10000led_npsclean`: 75 pts, 50 seeds, paired | OK, complete |
+| systematics | — | MISSING (training variability, template) |
+
+To close the gaps on the server: (a) 4.2 hallucination with the CURRENT algorithm: retrain the OF
+on the real AP (`TEMPLATE_SOURCE = "root"`) and on the fit, then the MC (the user will do it);
+(b) λ = 1 on more than ch34 only if the claim must be general (the user may skip it; not for the
+abstract); (c) optional: retrain the Wwna with the current code (plain max) for equal conditions;
+(d) retrain the OF on 3-5 points with 5-10 init seeds for the training systematic.
+**Wwna folders swapped on 2026-09-30 (user's request).** There are TWO trainings of the same Wwna
+configuration (500 steps, penalty wna 1): (1) the older one, with the 50-seed MC, is now
+`m205_results_wiener_APsimfit10000led_npsclean_swna1` in the project root; its λ: median 7.6,
+range 0.78-776 (ch91 38-776), > 1 in 71/75, still rising over the last 100 steps in 63/75 while J
+moves 0.09%; training history has only J and λ. (2) the later one (ex `_swna1_hist`, 1 seed, with
+loss/s1/s2 history and the validation work) is now
+`scarti/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist`. CONSEQUENCE: the test scripts
+that read the Wwna filters from the root folder (`test/likelihood_estimator_m205.py`,
+`exact_likelihood_m205.py`, `width_estimator_*`, `estimator_headroom_m205.py`,
+`check_likelihood_in_mc_m205.py`, `check_family_reach_m205.py`) now load training (1), while the
+numbers recorded in this file for those tests (e.g. M vs Y -2.32 / -1.75 / -0.41%) were obtained
+with training (2): rerunning them gives slightly different values. Training (1) was made with the
+interpolated peak and with the old kernel-saving bug (kernel one λ step ahead of f1, f2).
+
+**Abstract handoff for the writing chat:**
+`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/HANDOFF_abstract_cap4.md` (Italian, six
+blocks in the order the user wants, numbers and cautions per block).
+
+### Error bars — state the choice explicitly in the thesis
+- Default now (`compare_templates_m205.py`, `ERROR_BAR = "width"`, committed 668d95f5): the WIDTH
+  (P84-P16)/2 of the per-seed ΔBI distribution = the uncertainty of ONE simulation of 50 000
+  pile-ups. The error of the median = √(π/2) width/√50 ≈ 0.18 x width (option "median").
+- Measured: the width scales as 1/√NSIM (ch31 wp7, 2000 vs 8000 events per seed: 1.43% vs 0.69%,
+  ratio 2.07, expected 2); it does NOT depend on the number of seeds. So it is set by our choice
+  NSIM = 50 000, not by the detector.
+- On data the BI is never counted: it is always K x (survival fraction from the MC). The claim
+  "OPURA lowers the expected BI by X%" has as statistical error the error of the median; what does
+  not shrink with CPU time are the SYSTEMATICS (template, noise model, training variability of the
+  filters — up to 2.7% on a single point, OPURA has none). The relatore prefers the width: use it
+  as the conservative convention, say what it is, and add systematics when available.
+  Sources: PDG "Monte Carlo techniques" eq. 42.11 (variance of the MC mean = single variance / N);
+  Altman & Bland, BMJ 331 (2005) 903 (SD vs SE).
+
+### Key messages for the abstract (pile-up paragraph)
+1. Random coincidences of 2νββ events are the leading background of CUPID; they are rejected with
+   the pulse shape of the light detectors.
+2. The optimized-filtering method of the paper was applied to a full load curve (CROSS run m205,
+   5 light detectors x 15 bias points), with a pipeline from templates and noise spectra to an
+   analytic and a Monte-Carlo background index.
+3. The analytic BI is biased when the template is noisy ("hallucinated" performance); a simulated
+   average pulse and the MC evaluation fix it (MC/analytic 1.02-1.10).
+4. A Wiener-filter variant with a trainable noise weight gives no genuine gain: it spans the same
+   filter family as the optimum filter, the apparent gain came from the training dynamics, and λ
+   drifts back to the optimum-filter kernel.
+5. A new discriminant derived from the Neyman-Pearson lemma, a model-averaged likelihood ratio
+   (OPURA), needs no training and lowers the BI by 2-3.7% where the SNR is low (all 15 bias points
+   of the two noisiest channels), with differences within ±0.5% elsewhere (slightly worse on one
+   channel); best BI 4.5e-5 counts/(keV kg yr), below the CUPID pile-up target of 5e-5 in 5 of 75
+   points.
+
+### Next steps for the writer
+1. DONE 2026-09-30: campaign complete, note (17 pages, full 75-row table) and numbers above updated.
+2. Write the abstract paragraph (English) in `Abstract/abstract.tex`, then fill chapter4.tex from
+   line 786 following the skeleton, replacing the stale outline numbers.
+3. Open items that affect the text: systematic from training variability (retrain the OF on a few
+   points with 5-10 init seeds); literature check on the likelihood method. Citations: the
+   note's bibliography was written from memory — verify it; PDG MC review and Altman & Bland were
+   checked online. Given only in chat, NOT yet in the note, all from memory: Cramér (1946) for the
+   variance of the median (π/2)σ²/n, Law & Kelton for common random numbers, Lehmann & Romano /
+   Wijsman for the invariance argument on the time.
+
+---
+
+## ★ STATE ON 2026-09-23 (last commit `a06d0bd`, pushed) — technical background
 
 **Goal now.** Put a defensible pile-up-rejection result in the thesis. Two threads converged:
 (1) is the trainable Wiener filter really better than the optimum filter (OF)? (2) is there a
