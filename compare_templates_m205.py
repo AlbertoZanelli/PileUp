@@ -75,7 +75,7 @@ SLIDE = True             # True  -> figura PER SLIDE: un pannello BI grande + un
                          #          font e marker grandi, niente z ne' note fitte (plot_bi_slide);
                          #          la griglia dei filtri non viene disegnata (non e' roba da slide).
                          # False -> figura da DOCUMENTO: 3 pannelli (BI, z, Delta BI) fitti (plot_bi).
-ONLY_CHANNELS = [31, 34]     # lista di canali da disegnare, es. [34, 91]; None/[] = tutti quelli
+ONLY_CHANNELS = [31, 34, 71, 83, 91]     # lista di canali da disegnare, es. [34, 91]; None/[] = tutti quelli
                          # presenti nei CSV dei set
 
 # QUALE campagna Monte Carlo leggere. Nel CSV di una cartella convivono piu' campagne, una
