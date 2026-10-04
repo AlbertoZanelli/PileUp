@@ -96,13 +96,13 @@ MEAS_NAME   = "000205"
 #      m205_results_octopus_APsimfit10000led_npsclean         -> filtro ottimo
 #      m205_results_wiener_APsimfit10000led_npsclean_swna1    -> Wiener + penalita' su s
 #    RESULTS_NAME decide anche i punti da simulare, il template di M e dove vanno log e job.
-RESULTS_NAME = "m205_results_octopus_APsimfit10000led_npsclean"
+RESULTS_NAME = "m205_results_octopus_npsclean"
 
 # 1b) COMPARE: altre cartelle da simulare INSIEME a RESULTS_NAME. Per ogni seed gli eventi si
 #     generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna scrive nel proprio
 #     CSV: eventi identici per costruzione (e' su questo che si regge l'errore appaiato di Delta BI
 #     in compare_templates) e la generazione, ~70% del tempo, si paga una volta. [] = una sola.
-COMPARE = []
+COMPARE = ["m205_results_octopus_fit_npsclean"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi, cioe' cosa si considera la verita'.
 #    "fit"  -> il bestfit dello scan (liscio, senza rumore finito-N): la scelta delle campagne;
@@ -127,7 +127,7 @@ GEN_TEMPLATE = "fit"
 #    lancio, tre set sugli stessi impulsi. I CSV delle cartelle di training non cambiano.
 #    Costo di M: ~0.5 ms per evento. Sul cluster un seed (OF + M, 100 000 eventi) ~12 min, cioe' ~10 h
 #    per punto con N_SEEDS = 50 (misurato 2026-09-24, prima della versione veloce di M).
-LIKELIHOOD = True
+LIKELIHOOD = False
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali di RESULTS_NAME
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP

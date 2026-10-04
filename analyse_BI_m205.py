@@ -71,7 +71,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "fit"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"

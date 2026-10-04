@@ -62,7 +62,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 # MODALITA': da dove viene il TEMPLATE, e quali canali elaborare
 # ═════════════════════════════════════════════════════════════════════════════
 # TEMPLATE_SOURCE = "root" -> medianAP di Octopus dal file ROOT (comportamento originale).
-# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da simulate_BI_error_m205.py --make-ap
+# TEMPLATE_SOURCE = "sim" -> AP SIMULATO da build_simAP_injected_m205.py
 #   (m205_AP_sim/ch<ch>/simAP_ch<ch>_wp<wp>.npy): stessa forma dell'AP vero ma con una
 #   REALIZZAZIONE DIVERSA del rumore di template. Addestrando qui e valutando su eventi generati
 #   dall'AP vero si rompe l'auto-consistenza (cfr. paper, sez. 4.5).
@@ -89,11 +89,11 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE  = "rootinj"      # "fitinj" | "rootinj" | "fitgen" | "rootgen"
-_SIM_OK = ("fitinj", "rootinj", "fitgen", "rootgen")
-if TEMPLATE_SOURCE == "sim" and SIM_SOURCE not in _SIM_OK:
-    raise SystemExit(f"[ERROR] SIM_SOURCE='{SIM_SOURCE}' non valido: usare uno di {_SIM_OK}. "
-                     "I vecchi set 'fit'/'root' (rumore dalla NPS di Octopus) sono superati.")
+SIM_SOURCE      = "APsimfit10000led"      # tag dell'AP simulato: APsim<template><N>
+                                     # (build_simAP_injected_m205.py, MODE="mc")
+if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
+    print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "
+          "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # ── Sorgente della NPS ──────────────────────────────────────────────────────────────
 # "octopus": `averagepowerspectrum_noise_wp<wp>_medianpower` dal ROOT, come sempre. E' una
@@ -108,9 +108,17 @@ NPS_DIR     = os.path.join(BASE_DIR, "m205_NPS_clean")
 NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS = [83, 91]
+ONLY_CHANNELS = [31, 34, 71, 83, 91]   # None | [] = tutti i canali con ampiezza nel CSV
 
-_TAG        = ({"root": "", "fit": "_fit", "sim": "_sim_" + SIM_SOURCE}[TEMPLATE_SOURCE]
+def sim_folder_tag(tag):
+    """Pezzo di nome della cartella dei risultati per un template simulato.
+    I tag nuovi (APsim.../APreal...) si bastano; i vecchi (fitinj, rootgen, ...) tengono il
+    prefisso "sim_" con cui furono creati, cosi' le cartelle esistenti restano quelle."""
+    return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
+
+
+_TAG        = ({"root": "", "fit": "_fit",
+                "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
                + ("_npsclean" if NPS_SOURCE == "clean" else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
@@ -137,7 +145,7 @@ AMP_CSV = next((p for p in (os.path.join(BASE_DIR, "amplitudes_m205.csv"),
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 4         # GB per job
+RAM_GB            = 3         # GB per job
 MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat
@@ -229,7 +237,8 @@ ACCEPTANCE = 0.9
 WINDOW_SIZE = 10_000
 SAMPLING_RATE = 10_000
 SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
-N_TRIALS = 300
+N_TRIALS = 500          # stesso numero di passi del programma Wiener, cosi' le due curve di
+                        # addestramento (e i tempi) sono confrontabili
 
 T_MIN, T_MAX, N_T = 0, 8e-4, 100
 R_MIN, R_MAX, N_R = 0.0, 0.5, 100
@@ -238,7 +247,7 @@ R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 #   beta_Hz = banda RMS pesata sul rumore del template (Hz, senza 2*pi)
 #   rho_t   = SNR * beta  = figura di merito temporale per il pile-up (Hz)
 CSV_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR",
-                  "beta_Hz", "rho_t", "template", "BI", "J_final"]
+                  "beta_Hz", "rho_t", "template", "BI", "J_final", "n_trials", "train_s"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -258,6 +267,9 @@ def append_row_to_csv(path: str, row: dict):
         fcntl.flock(f, fcntl.LOCK_EX)          # lock esclusivo
         try:
             writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+            # la posizione presa all'open e' di PRIMA del lock: se un altro job ha scritto nel
+            # frattempo sarebbe ancora 0 e l'header finirebbe due volte nel CSV. Si rilegge qui.
+            f.seek(0, os.SEEK_END)
             if f.tell() == 0:                  # file vuoto -> scrivi prima l'header
                 writer.writeheader()
             writer.writerow({k: row.get(k) for k in CSV_FIELDNAMES})
@@ -341,18 +353,16 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
     signal_amp_torch = torch.tensor(signal_amp, dtype=torch.float32, device=device)
 
     # ── Optimise filters ──────────────────────────────────────────────────────
+    t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     f1_opt, f2_opt, J_values = an.optimize_filters(
         S_torch, H_unit_torch, w_torch,
         shared["t_torch"], shared["r_torch"], nps_torch,
         signal_amp_torch, shared["ratio_distribution_torch"],
         N_sigma = shared["N_sigma"],
-        activation_fct = torch.abs,
-        f1_init = None,
-        f2_init = None,
         n_trials = N_TRIALS,
-        use_interp = True,
         verbose = False,
-    )
+    )                                      # algoritmo originale dell'autore (vedi src/analysis.py)
+    train_s = time.perf_counter() - t_train
 
     BI_estimate = float(J_values[-1]) * fn.K
 
@@ -368,11 +378,16 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
         "template": TEMPLATE_SOURCE,
         "BI": float(BI_estimate),
         "J_final": float(J_values[-1]),
+        "n_trials": N_TRIALS,
+        "train_s": round(train_s, 1),
+        # Storia dell'addestramento (non entra nel CSV): J passo per passo, per vedere SE e
+        # DOVE si appiana. Il filtro ottimo non ha lambda, il kernel S*/NPS e' fisso.
+        "J_hist": np.asarray(J_values, dtype=float),
         # Filtri di banda e kernel (qui il filtro ottimo H_unit), salvati a parte
         # come .npy in FILTERS_DIR; non entrano nel BI CSV (append_row_to_csv tiene
         # solo CSV_FIELDNAMES). Filtro totale applicato ai dati: g_i = f_i * H_unit.
-        "f1": f1_opt.detach().cpu().numpy(),
-        "f2": f2_opt.detach().cpu().numpy(),
+        "f1": f1_opt,          # gia' numpy, |f| normalizzato
+        "f2": f2_opt,
         "kernel": np.asarray(H_unit),
     }
 
@@ -419,7 +434,11 @@ def run_worker(channel: int, wp: int):
                                  signal_amp, SAMPLING_RATE, shared, device)
         append_row_to_csv(OUTPUT_CSV, res)
         save_filters_npy(FILTERS_DIR, channel, wp, res["f1"], res["f2"], res["kernel"])
-        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  ->  {OUTPUT_CSV}")
+        hist_dir = os.path.join(OUTPUT_DIR, "training_history")
+        os.makedirs(hist_dir, exist_ok=True)
+        np.savez(os.path.join(hist_dir, f"hist_ch{channel}_wp{wp}.npz"), J=res["J_hist"])
+        print(f"[OK] ch {channel} wp {wp}: BI={res['BI']:.3e}  "
+              f"({res['n_trials']} passi in {res['train_s']:.0f} s)  ->  {OUTPUT_CSV}")
 
     except Exception as e:
         # L'errore finisce nel file di stderr del job (LOG_DIR); nessuna riga nel CSV.
