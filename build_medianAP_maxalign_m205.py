@@ -56,7 +56,7 @@ def shift_pad(p, s):
 def align_on_max(pulses, center_ratio=CENTER_RATIO):
     """Impulsi allineati sul massimo (portato a center_ratio*window) e normalizzati al
     massimo: passi 2-3 di build_mean_pulse. Serve anche fuori di qui, per calcolare
-    l'errore per time-bin dalla dispersione degli impulsi (test/fit_one_pulse_m205.py)."""
+    l'errore per time-bin dalla dispersione degli impulsi (test/fit/fit_one_pulse_m205.py)."""
     target = int(pulses.shape[1] * center_ratio)
     aligned = np.array([shift_pad(p, target - int(np.argmax(p))) for p in pulses])
     return aligned / aligned.max(axis=1, keepdims=True)

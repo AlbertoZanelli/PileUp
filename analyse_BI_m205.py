@@ -71,7 +71,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #   DENOISED: poche decine di parametri su 10000 punti mediano via il rumore finito-N.
 # In entrambi i casi la NPS viene dal ROOT: cambia solo il template. Cartella di output, CSV e
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
-TEMPLATE_SOURCE = "fit"    # "root" | "fit" | "sim"
+TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -89,8 +89,8 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE      = "APsimfit10000led"      # tag dell'AP simulato: APsim<template><N>
-                                     # (build_simAP_injected_m205.py, MODE="mc")
+SIM_SOURCE      = "APsimfit10000ledv2"    # tag dell'AP simulato: APsim<template><N>
+                                     # (build_simAP_injected_m205.py, MODE="mc"; "...v2": MODE="mc_v2")
 if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
     print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "
           "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
@@ -117,9 +117,26 @@ def sim_folder_tag(tag):
     return tag if tag.startswith(("APsim", "APreal")) else "sim_" + tag
 
 
+# Ritardo massimo del pile-up. "rise" = il rise time 10-90% del punto (canale, WP), da
+# amplitudes_m205.csv (utility.functions.dt_max_for): il pile-up non risolto e' quello con i due
+# impulsi entro il tempo di salita, la stessa definizione del paper (che con rise time 0.5-0.8 ms
+# usava 0.8 ms per tutti). Un numero [s] = lo stesso per tutti i punti: 8e-4 sono le campagne della
+# tesi. La griglia dei ritardi ha sempre N_T = 100 punti, qualunque sia il ritardo massimo.
+# La cartella prende il suffisso "_dtrise" (o "_dt<ms>ms"), cosi' non si mescola con le vecchie.
+T_MAX = "rise"
+_DT_TAG = "" if T_MAX == 8e-4 else "_dtrise" if T_MAX == "rise" else f"_dt{T_MAX * 1e3:g}ms"
+
+# Condizioni di CUPID: l'ampiezza del CSV si moltiplica per utility.functions.cupid_factor(canale)
+# (LY 0.36 e guadagno NTL della baseline CUPID). La cartella prende il suffisso "_cupid": il Monte
+# Carlo lo riconosce e usa i fotoni di CUPID. False -> m205 com'e' misurata.
+# RIMANDATO: il guadagno G_LMO va ancora deciso (vedi tesi_note/riscalamento_CUPID.md).
+CUPID = False
+
 _TAG        = ({"root": "", "fit": "_fit",
                 "sim": "_" + sim_folder_tag(SIM_SOURCE)}[TEMPLATE_SOURCE]
-               + ("_npsclean" if NPS_SOURCE == "clean" else ""))
+               + ("_npsclean" if NPS_SOURCE == "clean" else "")
+               + _DT_TAG
+               + ("_cupid" if CUPID else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, "m205_results_octopus" + _TAG)
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -145,7 +162,7 @@ AMP_CSV = next((p for p in (os.path.join(BASE_DIR, "amplitudes_m205.csv"),
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 3         # GB per job
+RAM_GB            = 6         # GB per job (N_T = 295: misurati 4.3 GB di picco, ch31 wp7)
 MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat
@@ -240,7 +257,8 @@ SAMPLING_TIME = WINDOW_SIZE / SAMPLING_RATE
 N_TRIALS = 500          # stesso numero di passi del programma Wiener, cosi' le due curve di
                         # addestramento (e i tempi) sono confrontabili
 
-T_MIN, T_MAX, N_T = 0, 8e-4, 100
+T_MIN = 0
+N_T = 100               # punti della griglia dei ritardi [0, dt_max], fissi
 R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 
 # Colonne del CSV dei risultati
@@ -303,8 +321,9 @@ def save_filters_npy(dirpath: str, channel, wp, f1, f2, kernel):
 # ═════════════════════════════════════════════════════════════════════════════
 # Quantità condivise + core BI estimator  (import pesanti SOLO qui dentro)
 # ═════════════════════════════════════════════════════════════════════════════
-def build_shared(device) -> dict:
-    """Quantità condivise (poco costose): ricalcolate da ogni worker."""
+def build_shared(device, dt_max) -> dict:
+    """Quantità condivise (poco costose): ricalcolate da ogni worker. dt_max [s] = ritardo
+    massimo del pile-up del punto (fn.dt_max_for)."""
     import torch
     from scipy.stats import norm
     from utility.double_beta_spectrum import pdf_ratio2b
@@ -314,7 +333,8 @@ def build_shared(device) -> dict:
     ratio_distribution /= np.mean(ratio_distribution)
     return {
         "N_sigma": N_sigma,
-        "t_torch": torch.linspace(T_MIN, T_MAX, N_T, dtype=torch.cfloat, device=device),
+        "dt_max": dt_max,
+        "t_torch": torch.linspace(T_MIN, dt_max, N_T, dtype=torch.cfloat, device=device),
         "r_torch": torch.linspace(R_MIN, R_MAX, N_R, dtype=torch.cfloat, device=device),
         "ratio_distribution_torch": torch.tensor(
             ratio_distribution, dtype=torch.cfloat, device=device
@@ -364,7 +384,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp,
     )                                      # algoritmo originale dell'autore (vedi src/analysis.py)
     train_s = time.perf_counter() - t_train
 
-    BI_estimate = float(J_values[-1]) * fn.K
+    BI_estimate = float(J_values[-1]) * fn.K_for(shared["dt_max"])   # K della finestra [0, dt_max]
 
     return {
         "channel": channel,
@@ -405,6 +425,9 @@ def run_worker(channel: int, wp: int):
         signal_amp = amps.get((int(channel), round(vbias, 3)))
         if signal_amp is None:
             raise RuntimeError(f"Nessuna ampiezza nel CSV per (ch {channel}, V_bias {vbias:.3f})")
+        import utility.functions as fn
+        if CUPID:
+            signal_amp *= fn.cupid_factor(channel)
 
         # 2. File ROOT del canale
         filepath = root_file_for_channel(channel)
@@ -412,7 +435,7 @@ def run_worker(channel: int, wp: int):
             raise RuntimeError(f"File ROOT non trovato per il canale {channel}")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        shared = build_shared(device)
+        shared = build_shared(device, fn.dt_max_for(T_MAX, channel, vbias))
 
         # 3. Estrazione Meanpulse + NPS
         #    Il template viene dal fit oppure dall'AP di Octopus (TEMPLATE_SOURCE);

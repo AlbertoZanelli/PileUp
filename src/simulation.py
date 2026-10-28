@@ -1,5 +1,6 @@
 import numpy as np
-from utility.double_beta_spectrum import inverse_cdf_ratio2b
+from functools import lru_cache
+from utility.double_beta_spectrum import inverse_cdf_ratio2b, build_sum_energy_distribution
 
 from scipy.signal import bessel, bilinear, lfilter
 
@@ -110,6 +111,73 @@ def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, 
     # --- final frequency-domain realizations ---
     fpulses = signal_freq * phase + noise_freq
     return fpulses, signal_freq, noise_freq, generated_r, generated_dt
+
+
+# inversa della cdf dell'energia somma nella ROI: si costruisce una volta per ROI
+_sum_energy_icdf = lru_cache(maxsize=None)(build_sum_energy_distribution)
+
+
+def simulate_frequency_pulses_v2(S, nps, w, nsim, rng, rng_x, signal_scale, dt_max,
+                                 n_photons=None, e_roi=None, q_value=3.034, shift_max=0.0):
+    """
+    Variante v2 di simulate_frequency_pulses (2026-10-25): gli stessi eventi, piu' le tre aggiunte
+    della generazione degli eventi del paper (Berest 2026, sez. 4.2). L'ORIGINALE non si tocca:
+    questa funzione la chiama e lavora solo su cio' che le passa e su cio' che ne riceve.
+
+    Ogni aggiunta e' una riga e si spegne con il suo argomento a None / 0:
+
+      1. ENERGIA NELLA ROI (e_roi = (E_lo, E_hi) in MeV). L'energia somma E dell'evento si estrae
+         dallo spettro somma di due 2nbb ristretto alla ROI (build_sum_energy_distribution, la
+         ricetta di Ahmine 2023). La luce e' proporzionale all'energia: l'ampiezza diventa
+         A * E/Q. Il rapporto r resta estratto dalla f_R originale, costruita a E = Q: fra 3019 e
+         3049 keV la f_R cambia dello 0.4% (distanza di variazione totale).
+      2. FLUTTUAZIONE DEL NUMERO DI FOTONI (n_photons = fotoni assorbiti a E = Q). Come nel
+         codice originale, con detector_sigma: l'ampiezza dell'evento e' una gaussiana di media
+         A E/Q e sigma = (A E/Q) / sqrt(n_photons E/Q), cioe' Poisson nell'approssimazione
+         gaussiana (~200 fotoni). E' UN fattore per evento: i due impulsi di un pile-up
+         fluttuano insieme e r resta esatto.
+      3. SHIFT SUB-CAMPIONE (shift_max in s; 1e-4 = un campione a 10 kHz). L'impulso arriva in un
+         istante continuo, il campionamento ha una griglia fissa: l'inizio cade a caso fra due
+         campioni. Tutto il SEGNALE (i due impulsi) si ritarda di tau ~ U(0, shift_max), cioe'
+         si moltiplica per e^{-i w tau}; il rumore resta quello estratto. Stessa distribuzione
+         dello shift di simulate_frequency_pulses_fixed_dt_r, qui con un generatore con seed.
+
+    Due generatori:
+      rng   -> quello dell'originale (rumore, ampiezza, r, dt) con le stesse estrazioni nello
+               stesso ordine: con le tre aggiunte spente l'uscita e' IDENTICA all'originale.
+      rng_x -> E e tau, in quest'ordine. Separato, cosi' le aggiunte non spostano le estrazioni
+               di rng; con lo stesso seed, singoli e pile-up ricevono gli stessi E e tau.
+
+    Parameters
+    ----------
+    S, nps, w : come in simulate_frequency_pulses.
+    nsim : int
+        Numero di eventi.
+    rng, rng_x : numpy.random.Generator
+    signal_scale : float
+        Ampiezza A a E = Q (l'ampiezza di ROI).
+    dt_max : float
+        Ritardo massimo del pile-up [s]; 0 -> impulsi singoli.
+
+    Returns
+    -------
+    fpulses : ndarray, shape (nsim, M)
+        Eventi nel dominio delle frequenze, come l'originale.
+    info : dict
+        Per evento: "energy" [MeV], "amp" (ampiezza media, prima della fluttuazione),
+        "sigma" (della fluttuazione), "tau" [s], "r", "dt" [s].
+    """
+    e = (_sum_energy_icdf(*e_roi)(rng_x.random(nsim)) if e_roi is not None
+         else np.full(nsim, q_value))                         # 1. energia somma [MeV]
+    amp = signal_scale * (e / q_value)                        #    luce proporzionale all'energia
+    sigma = (amp / np.sqrt(n_photons * (e / q_value)) if n_photons
+             else np.zeros(nsim))                             # 2. Poisson sui fotoni
+    fpulses, _, noise, r, dt = simulate_frequency_pulses(S, nps, sigma, w, nsim=nsim, seed=rng,
+                                                         signal_scale=amp, dt_max=dt_max)
+    tau = rng_x.uniform(0.0, shift_max, nsim) if shift_max else np.zeros(nsim)
+    if shift_max:                                             # 3. shift del solo segnale
+        fpulses = (fpulses - noise) * np.exp(-1j * w[None, :] * tau[:, None]) + noise
+    return fpulses, dict(energy=e, amp=amp, sigma=sigma, tau=tau, r=r, dt=dt)
 
 def simulate_frequency_pulses_fixed_dt_r(S, nps, w, dt ,r ,nsim=10000, seed=1234, signal_scale=0.002):
     rng = np.random.default_rng(seed)

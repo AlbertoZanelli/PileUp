@@ -45,6 +45,7 @@ import uproot
 
 import extract_AP_pulses_m205 as ex        # lettore del binario, gia' verificato bit-a-bit
 import src.simulation as sim               # generatore degli impulsi, lo stesso del MC
+from build_medianAP_maxalign_m205 import shift_pad   # traslazione senza wrap (MODE = "mc_v2")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Config
@@ -67,8 +68,13 @@ PRETRIGGER = 0.5
 SAMPLING_RATE = 10_000
 
 # ── Come si costruisce l'AP ─────────────────────────────────────────────────
-MODE     = "mc"          # "mc" = impulsi generati come nel Monte Carlo | "realnoise" = iniezione
+MODE     = "mc_v2"       # "mc" = impulsi generati come nel Monte Carlo | "realnoise" = iniezione
                          #        su finestre vere dal binario (serve il .bin, solo sul server)
+                         # "mc_v2" = impulsi della generazione v2 (build_mc_v2): ampiezza LED dal
+                         #        filtro ottimo, shift sub-campione, baseline sul pretrigger,
+                         #        allineamento sul massimo. Tag dei file: APsimfit<N>ledv2.
+PRE_BASELINE = 4900      # mc_v2: la baseline e' la media dei campioni [0, PRE_BASELINE), come in
+                         # get_PSD_interpole e build_mean_pulse (centro 5000, pulse_start_pos -100)
 N_PULSES = 10000          # solo per MODE="mc": quanti impulsi mediare. Un intero, oppure
                          # "match" = quanti servono perche' il template abbia lo STESSO rumore
                          # dell'AP vero di quel (canale, WP) -- vedi match_n(). Il numero
@@ -291,6 +297,67 @@ def build_mc(channel, wp, sources):
     return out, n_pulses, amp
 
 
+def led_amp_of(channel, wp):
+    """Ampiezza LED del WP [V], versione v2: mediana dell'ampiezza del FILTRO OTTIMO di Octopus
+    (optimumfilter__wp<wp>, eventi con good == 1). E' la stessa grandezza da cui
+    risetime_and_amplitude_.py ricava l'ampiezza di ROI di amplitudes_m205.csv; led_amp usa
+    invece maxminusbaseline. Le due mediane differiscono meno dello 0.1%."""
+    with uproot.open(root_file(channel)) as f:
+        t = f[f"optimumfilter__wp{wp}"]
+        a, good = t["amplitude"].array(library="np"), t["good"].array(library="np")
+    return float(np.median(a[good == 1]))
+
+
+def ledv2_pulses(channel, wp, n_pulses=N_PULSES, seed=SEED):
+    """Gli impulsi dell'AP simulato v2 (passi 1-6 di build_mc_v2), a blocchi di GEN_CHUNK.
+    Usata da build_mc_v2 e dal notebook tutorial, che ne mostra gli impulsi e le medie parziali."""
+    nps = load_nps(channel, wp)
+    amp = led_amp_of(channel, wp)
+    w = 2 * np.pi * np.fft.fftfreq(WINDOW, 1.0 / SAMPLING_RATE)
+    tpl = template(channel, wp, "fit")                      # 1. il fit, picco = 1
+    S_raw = np.fft.fft(tpl)                                 #    NON finestrato, come in build_mc
+    target = int(np.argmax(tpl))
+    s = seed + 1000 * channel + wp                          # un seed per punto, come build_mc
+    rng, rng_x = np.random.default_rng(s), np.random.default_rng([s, 1])
+    for k in range(0, n_pulses, GEN_CHUNK):
+        n = min(GEN_CHUNK, n_pulses - k)
+        # 2.-3. A_LED * fit ritardato di tau + rumore generato dalla NPS
+        fp, _ = sim.simulate_frequency_pulses_v2(S_raw, nps, w, n, rng, rng_x, signal_scale=amp,
+                                                 dt_max=0.0, shift_max=1.0 / SAMPLING_RATE)
+        p = np.fft.ifft(fp, axis=1).real
+        del fp
+        p -= p[:, :PRE_BASELINE].mean(axis=1, keepdims=True)                       # 4. baseline
+        p /= p.max(axis=1, keepdims=True)                                          # 5. /max
+        yield np.array([shift_pad(q, target - int(np.argmax(q))) for q in p])     # 6. allineamento
+
+
+def build_mc_v2(channel, wp, n_pulses=N_PULSES, seed=SEED):
+    """AP simulato v2 = MEDIA di n_pulses impulsi SINGOLI all'ampiezza LED, trattati come si
+    trattano gli impulsi veri. Per ogni impulso (ledv2_pulses):
+
+      1. il fit del WP, picco = 1;
+      2. ampiezza LED = mediana del filtro ottimo di Octopus (led_amp_of), uguale per tutti, e
+         shift sub-campione tau uniforme in [0, 1 campione), come gli impulsi LED veri che cadono
+         a caso fra due campioni;
+      3. rumore: una realizzazione gaussiana nuova dalla NPS misurata del WP (la stessa del Monte
+         Carlo; le finestre di rumore vere sono MODE = "realnoise");
+      4. baseline = media del pretrigger, campioni [0, PRE_BASELINE), prima dell'impulso (che parte
+         a ~4990), sottratta;
+      5. normalizzazione al massimo;
+      6. allineamento sul massimo: traslazione di un numero intero di campioni, senza wrap-around,
+         finche' il massimo cade dove cade quello del fit. Shift e rumore spostano il massimo del
+         singolo impulso; l'AP resta nella posizione del template che genera gli eventi.
+    Poi:
+      7. media degli n_pulses impulsi, normalizzata al massimo.
+    Niente fluttuazione dei fotoni: i fotoni del LED non sono quelli di scintillazione (il
+    guadagno NTL e' diverso) e, normalizzando ogni impulso, l'ampiezza non conta. Niente energia
+    nella ROI: agli impulsi LED non si applica.
+
+    Restituisce (AP normalizzato al massimo, n_pulses, A_LED [V]); il file lo salva chi chiama."""
+    ap = sum(p.sum(axis=0) for p in ledv2_pulses(channel, wp, n_pulses, seed)) / n_pulses   # 7.
+    return ap / ap.max(), n_pulses, led_amp_of(channel, wp)
+
+
 def build_realnoise(channel, wp, sources):
     """AP iniettando il template su finestre di rumore VERE dal binario, N = quello dell'AP
     vero e ampiezze LED. E' la sistematica sul rumore di template, non il caso nominale."""
@@ -312,10 +379,14 @@ def build_realnoise(channel, wp, sources):
 
 
 def main():
-    if MODE not in ("mc", "realnoise"):
-        raise SystemExit(f"[ERROR] MODE='{MODE}' non valido: 'mc' o 'realnoise'.")
+    if MODE not in ("mc", "realnoise", "mc_v2"):
+        raise SystemExit(f"[ERROR] MODE='{MODE}' non valido: 'mc', 'mc_v2' o 'realnoise'.")
     print(f"AP simulati -> {OUT_DIR}")
-    if MODE == "mc":
+    if MODE == "mc_v2":
+        print(f"  media di {N_PULSES} impulsi della generazione v2 (build_mc_v2): ampiezza LED dal "
+              f"filtro ottimo, shift sub-campione, baseline sul pretrigger, allineati sul massimo")
+        print(f"  tag dei file: APsimfit{N_PULSES}ledv2\n")
+    elif MODE == "mc":
         print(f"  media di {N_PULSES} impulsi GENERATI: template + rumore dalla NPS misurata, "
               f"ampiezza '{AP_AMPLITUDE}'")
         print(f"  tag dei file: APsim<template>{N_PULSES}\n")
@@ -333,7 +404,10 @@ def main():
                        os.path.exists(os.path.join(FIT_DIR, f"bestfit_ch{ch}_wp{wp}.npy"))]
                 if not src:
                     raise RuntimeError("template 'fit' non trovato")
-                if MODE == "mc":
+                if MODE == "mc_v2":
+                    ap, N, amp = build_mc_v2(ch, wp)
+                    res = {"fit": save_ap(ch, wp, f"APsimfit{N}ledv2", ap)}
+                elif MODE == "mc":
                     res, N, amp = build_mc(ch, wp, src)
                 else:
                     res, N, amp = build_realnoise(ch, wp, src)

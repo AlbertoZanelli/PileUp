@@ -72,7 +72,7 @@ BI_CSV      = os.path.join(RESULTS_DIR, "BI_results_m205" + SUFFIX + ".csv")
 FILTERS_DIR = os.path.join(RESULTS_DIR, "trained_filters")     # .npy di f1/f2/lambda(f)
 TIMING_CSV  = os.path.join(RESULTS_DIR, "timing_SNR_m205.csv")  # fallback per rho_t
 AMP_CSV     = os.path.join(BASE_DIR, "amplitudes_m205.csv")     # condiviso tra i set
-RBOL_TXT    = os.path.join(BASE_DIR, "load_curve_data_m205.txt")  # R_bol dall'Excel
+RBOL_TXT    = os.path.join(BASE_DIR, "m205_load_curves", "load_curve_data_m205.txt")  # R_bol dall'Excel
 OUTDIR      = RESULTS_DIR                                       # output accanto ai dati
 
 MEAS_NAME     = "000205"

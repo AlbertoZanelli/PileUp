@@ -146,16 +146,28 @@ N_SEEDS = 50                 # ripetizioni INDIPENDENTI: il seed SEED + i genera
                             # vedono gli STESSI eventi: il Delta BI seed per seed contiene la
                             # covarianza e la sua dispersione e' l'errore (compare_templates).
 ACCEPTANCE = 0.9            # frazione di singoli che il taglio accetta
-T_MAX      = 8e-4           # ritardo massimo del pile-up [s] (= T_MAX del BI analitico)
+T_MAX      = 8e-4           # ritardo massimo del pile-up (= T_MAX del training): 8e-4 [s] nelle
+                            # campagne della tesi; "rise" = il rise time di ogni punto
+                            # (fn.dt_max_for). Deve coincidere con il suffisso delle cartelle
+                            # ("_dtrise", "_dt<ms>ms", niente = 8e-4): folder_info si ferma se no.
+                            # K e finestra di ricerca del massimo seguono il punto (point_dt).
+GEN_V2     = False          # True -> eventi da simulate_psd_v2: fotoni (detector_sigma), energia
+                            # somma nella ROI, shift sub-campione, baseline sul pretrigger.
+                            # False -> la generazione delle campagne della tesi, bit per bit.
+                            # Il CSV prende il suffisso "_v2". Per la campagna nuova: GEN_V2 = True,
+                            # T_MAX = "rise", RESULTS_NAME/COMPARE = le cartelle "_dtrise[_cupid]".
 # Scelte FISSE della generazione (erano interruttori, sempre a questi valori; cambiarle genera
 # eventi diversi e rende i risultati non confrontabili con le campagne fatte):
-#   - nessuno spread di ampiezza oltre al rumore (DETECTOR_SIGMA = 0): e' l'ipotesi del BI analitico;
+#   - nessuno spread di ampiezza oltre al rumore (DETECTOR_SIGMA = 0): e' l'ipotesi del BI analitico
+#     (con GEN_V2 lo spread dei fotoni si aggiunge, vedi simulate_psd_v2);
 #   - singoli e pile-up con lo STESSO seed: stesso rumore, ampiezza e r, cambia solo il ritardo del
 #     secondo impulso, come nel paper (misurato su ch91 WP15: non cambia media ne' precisione);
 #   - r su tutto [0, 1] della distribuzione 2beta, senza ripiegarlo in [0, 0.5].
 
 # Un seed solo -> il CSV di sempre; piu' seed -> un CSV a parte, col numero di seed nel nome.
-OUT_NAME = "BI_mc_error_m205.csv" if N_SEEDS == 1 else f"BI_mc_error_m205_seeds{N_SEEDS}.csv"
+_V2 = "_v2" if GEN_V2 else ""
+OUT_NAME = (f"BI_mc_error_m205{_V2}.csv" if N_SEEDS == 1
+            else f"BI_mc_error_m205{_V2}_seeds{N_SEEDS}.csv")
 
 # ── Esecuzione sul cluster PBS: un job per punto ────────────────────────────────────────────────
 SUBMIT_MODE       = "qsub"  # "qsub" = un job per punto ; "local" = in sequenza, qui (debug)
@@ -195,9 +207,11 @@ ROW_KEY = ("channel", "wp", "gen", "seed")                   # identita' di una 
 # ═════════════════════════════════════════════════════════════════════════════
 # LE CARTELLE DI RISULTATI: tutto si deduce dal nome
 # ═════════════════════════════════════════════════════════════════════════════
-# Suffissi che il programma Wiener aggiunge in coda e che toccano SOLO il training (lambda fissa,
-# fase libera, lr minimo): qui non servono, si tolgono prima di leggere template e NPS.
-TRAIN_ONLY = r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+)+$"
+# Suffissi che i programmi di training aggiungono in coda e che toccano SOLO il training (lambda
+# fissa, fase libera, lr minimo, ritardo massimo, ampiezze CUPID): qui non servono a leggere
+# template e NPS, si tolgono. Il ritardo massimo ("_dt<ms>ms") lo controlla folder_info contro
+# T_MAX; "_cupid" decide i fotoni (CUPID, sotto FOLDERS).
+TRAIN_ONLY = r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+|_dt(?:rise|[0-9.]+ms)|_cupid)+$"
 
 
 def _parse_results_name(name):
@@ -238,6 +252,10 @@ def folder_info(name):
     addestrati, CSV del Monte Carlo da scrivere) e cosa contiene (filtro, template, NPS).
     Costruisce FOLDERS, qui sotto."""
     filt, train, sim_from, nps = _parse_results_name(name)
+    m = re.search(r"_dt(rise|[0-9.]+ms)", name)          # ritardo massimo del training
+    if (m.group(0) if m else "") != fn.dt_tag(T_MAX):
+        raise SystemExit(f"[ERROR] {name} e' addestrata con un altro ritardo massimo di T_MAX = "
+                         f"{T_MAX}: eventi e K non sarebbero quelli del training")
     d = os.path.join(BASE_DIR, name)
     csvs = glob.glob(os.path.join(d, "BI_results_*.csv"))
     if not csvs:
@@ -253,6 +271,11 @@ FOLDERS = [folder_info(n) for n in dict.fromkeys([RESULTS_NAME] + list(COMPARE))
 # la NPS GENERA gli eventi: con NPS diverse le cartelle non vedrebbero gli stessi eventi
 if len({f["nps"] for f in FOLDERS}) > 1:
     raise SystemExit("[ERROR] COMPARE: le cartelle usano NPS diverse, gli eventi non sarebbero gli stessi")
+# "_cupid": addestrate con le ampiezze di CUPID (signal_amp del CSV gia' scalata); i fotoni del
+# Monte Carlo diventano quelli di CUPID (fn.LY_CUPID).
+if len({"_cupid" in f["name"] for f in FOLDERS}) > 1:
+    raise SystemExit("[ERROR] COMPARE: cartelle CUPID e m205 insieme, gli eventi non sarebbero gli stessi")
+CUPID       = "_cupid" in FOLDERS[0]["name"]
 NPS_SOURCE  = FOLDERS[0]["nps"]
 RESULTS_DIR = FOLDERS[0]["dir"]                  # log, job e copia congelata
 LOG_DIR     = os.path.join(RESULTS_DIR, "logs_mc")
@@ -267,7 +290,9 @@ def likelihood_dir():
     tag = f["train"] if f["train"] != "sim" else (
         f["sim"] if f["sim"].startswith(("APsim", "APreal")) else "sim_" + f["sim"])
     return os.path.join(BASE_DIR, "m205_results_likelihood_" + tag
-                        + ("_npsclean" if f["nps"] == "clean" else ""))
+                        + ("_npsclean" if f["nps"] == "clean" else "")
+                        + fn.dt_tag(T_MAX)
+                        + ("_cupid" if CUPID else ""))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -374,22 +399,31 @@ def load_filters(f, channel, wp, nps, row):
     return H, f1, f2
 
 
-def make_likelihood(channel, wp):
+def make_likelihood(channel, wp, dt_max):
     """Lo stimatore M del punto (src/pileup_likelihood.py), costruito UNA volta per punto sul
     template di TRAINING di RESULTS_NAME e sulla NPS. Usata da run_worker se LIKELIHOOD."""
     f = FOLDERS[0]
     nps = load_noise(channel, wp)
     S, w, _ = an.compute_H(template_pulse(channel, wp, f["train"], f["sim"]), nps, np.hanning,
                            sampling_rate=SAMPLING_RATE)
-    return PileupLikelihood(S, nps, w, dt_max=T_MAX)
+    return PileupLikelihood(S, nps, w, dt_max=dt_max)
+
+
+def point_dt(channel, vbias):
+    """(dt_max [s], K, jitter_max) del punto. jitter_max = campioni attorno al centro in cui
+    get_PSD_interpole cerca il massimo: deve contenere anche il picco del secondo impulso, fino
+    a dt_max dopo (20 = il default, che vale per 0.8 ms). Usata da run_pair e run_worker."""
+    dt = fn.dt_max_for(T_MAX, channel, vbias)
+    return dt, fn.K_for(dt), max(20, int(np.ceil(dt * SAMPLING_RATE)) + 10)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # IL CUORE: generare gli eventi e calcolare il BI
 # ═════════════════════════════════════════════════════════════════════════════
-def simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats=()):
+def simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), jitter_max=20):
     """Genera NSIM eventi e restituisce, per ogni algoritmo, il suo discriminante evento per evento.
         dt_max = 0 -> impulsi SINGOLI;  dt_max = T_MAX -> PILE-UP.
+        jitter_max -> finestra di ricerca del massimo (point_dt); 20 = le campagne della tesi.
         filters    -> (kernel, f1, f2) di ogni cartella: discriminante = rapporto dei massimi
                       dei due segnali filtrati (get_PSD_interpole);
         stats      -> altre statistiche f(impulsi) -> un numero per evento (qui: -M).
@@ -417,25 +451,72 @@ def simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats=()):
         # intatto per l'algoritmo successivo (test/check_compare_mode_m205.py,
         # test/check_likelihood_in_mc_m205.py)
         for o, (H, f1, f2) in zip(out, filters):
-            o.append(np.asarray(an.get_PSD_interpole(dataset, H, f1, f2)[0]).ravel())
+            o.append(np.asarray(an.get_PSD_interpole(dataset, H, f1, f2,
+                                                     jitter_max=jitter_max)[0]).ravel())
         for o, stat in zip(out[len(filters):], stats):
             o.append(np.asarray(stat(pulses)).ravel())
         del pulses, dataset
     return [np.concatenate(o) for o in out]
 
 
-def bi_from(psd_single, psd_pileup):
+def simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), n_photons=None,
+                    e_roi=fn.E_ROI_MEV, shift_max=1.0 / SAMPLING_RATE, jitter_max=20,
+                    nsim=NSIM, chunk=CHUNK, info_out=None, pre_baseline=True):
+    """Variante v2 di simulate_psd: stesso schema (blocchi di `chunk`, un generatore per tutta la
+    simulazione, discriminante di ogni algoritmo sugli STESSI impulsi), con gli eventi della
+    generazione v2 (sim.simulate_frequency_pulses_v2):
+        n_photons -> fotoni a Q_bb del canale (fn.n_photons): fluttuazione dell'ampiezza;
+        e_roi     -> energia somma estratta nella ROI (MeV); None = sempre Q_bb;
+        shift_max -> shift sub-campione massimo [s]; 0 = nessuno.
+    Ogni aggiunta si spegne da sola; con tutte spente gli eventi sono quelli di simulate_psd.
+    pre_baseline: la baseline sottratta a ogni evento e' la media del pretrigger (campioni
+    [0, 4900)) e non di tutta la finestra (get_PSD_interpole); False = come simulate_psd.
+
+    Il secondo generatore (E e tau) ha seed [seed, 1]: singoli (dt_max = 0) e pile-up chiamati con
+    lo stesso seed ricevono gli stessi E e tau, oltre a rumore, ampiezza e r come prima. Cambia
+    solo il ritardo del secondo impulso: il confronto resta appaiato.
+
+    jitter_max: campioni attorno al centro in cui get_PSD_interpole cerca il massimo. Va preso dal
+    dt_max del pile-up (point_dt; non da quello dei singoli, che e' 0), uguale per le due popolazioni.
+    info_out: se e' una lista, ci si appende il dict di ogni blocco (energia, tau, r, dt, ...
+    evento per evento), per esempio per la sopravvivenza in funzione del ritardo.
+    Usata da run_pair quando GEN_V2, e dal notebook tutorial."""
+    rng, rng_x = np.random.default_rng(seed), np.random.default_rng([seed, 1])
+    out = [[] for _ in range(len(filters) + len(stats))]
+    for k in range(0, nsim, chunk):
+        n = min(chunk, nsim - k)
+        fpulses, info = sim.simulate_frequency_pulses_v2(S, nps, w, n, rng, rng_x,
+                                                         signal_scale=signal_amp, dt_max=dt_max,
+                                                         n_photons=n_photons, e_roi=e_roi,
+                                                         q_value=fn.Q_BB_MEV, shift_max=shift_max)
+        if info_out is not None:
+            info_out.append(info)
+        pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
+        del fpulses
+        dataset = ds.NumpyDataset(pulses)
+        dataset.win_length = pulses.shape[1]
+        for o, (H, f1, f2) in zip(out, filters):
+            o.append(np.asarray(an.get_PSD_interpole(dataset, H, f1, f2, jitter_max=jitter_max,
+                                                     pre_baseline=pre_baseline)[0]).ravel())
+        for o, stat in zip(out[len(filters):], stats):
+            o.append(np.asarray(stat(pulses)).ravel())
+        del pulses, dataset
+    return [np.concatenate(o) for o in out]
+
+
+def bi_from(psd_single, psd_pileup, K):
     """BI Monte Carlo di UN algoritmo, dal suo discriminante su singoli e pile-up. Il pile-up deve
     stare nella coda BASSA (vale per il rapporto dei massimi, e per -M):
         taglio = percentile che accetta ACCEPTANCE dei singoli;
         rp     = frazione di pile-up sotto il taglio (rigettata);
         BI     = K (1 - rp),
     con l'incertezza statistica di compute_BI_uncertainty (binomiale + posizione del taglio).
+    K: quello della finestra dei ritardi [0, dt_max] del punto (point_dt; per 0.8 ms e' fn.K).
     Usata da run_pair per ogni algoritmo."""
     cut = np.percentile(psd_single, 100 - ACCEPTANCE * 100)
     rp = float(np.mean(psd_pileup < cut))
-    sigma_rp, sigma_bi = an.compute_BI_uncertainty(psd_single, psd_pileup, ACCEPTANCE, rp)
-    return dict(rp=rp, sigma_rp=sigma_rp, BI_mc=fn.K * (1.0 - rp), sigma_BI=sigma_bi,
+    sigma_rp, sigma_bi = an.compute_BI_uncertainty(psd_single, psd_pileup, ACCEPTANCE, rp, K=K)
+    return dict(rp=rp, sigma_rp=sigma_rp, BI_mc=K * (1.0 - rp), sigma_BI=sigma_bi,
                 cut=cut, psd_single=psd_single, psd_pileup=psd_pileup)
 
 
@@ -452,13 +533,20 @@ def run_pair(channel, wp, rows, seed=SEED, likelihood=None):
     if len(amps) > 1:
         raise RuntimeError(f"signal_amp diverso fra le cartelle {amps}: eventi non confrontabili")
     signal_amp = amps.pop()
+    dt_max, K, jitter = point_dt(channel, float(rows[0]["vbias"]))
     meanpulse, nps = load_row_inputs(channel, wp)
     S, w, _ = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
     filters = [load_filters(f, channel, wp, nps, r) for f, r in zip(FOLDERS, rows)]
     stats = () if likelihood is None else (lambda p: -likelihood.statistic(p),)
-    singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats)
-    pileups = simulate_psd(S, nps, w, filters, signal_amp, T_MAX, seed, stats)
-    out = [bi_from(s, p) for s, p in zip(singles, pileups)]
+    if GEN_V2:      # fotoni + energia nella ROI + shift sub-campione + baseline sul pretrigger
+        kw = dict(n_photons=fn.n_photons(channel, cupid=CUPID), e_roi=fn.E_ROI_MEV,
+                  shift_max=1.0 / SAMPLING_RATE, jitter_max=jitter)
+        singles = simulate_psd_v2(S, nps, w, filters, signal_amp, 0.0, seed, stats, **kw)
+        pileups = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats, **kw)
+    else:
+        singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats, jitter)
+        pileups = simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats, jitter)
+    out = [bi_from(s, p, K) for s, p in zip(singles, pileups)]
     return out if likelihood is None else (out[:-1], out[-1])
 
 
@@ -560,7 +648,8 @@ def run_worker(channel, wp):
             print(f"[ERROR] ch {channel} wp {wp}: riga non trovata in {f['bi_csv']}")
             return
         rows.append(r[0])
-    lik = make_likelihood(channel, wp) if LIKELIHOOD else None    # una volta per punto
+    lik = (make_likelihood(channel, wp, point_dt(channel, float(rows[0]["vbias"]))[0])
+           if LIKELIHOOD else None)                               # una volta per punto
     for i in range(N_SEEDS):
         seed = SEED + i
         try:

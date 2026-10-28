@@ -67,7 +67,7 @@ BIN_CH_REGEX = r"_(\d+)_000\.bin_edmean\.bin$"
 # ── AVERAGE_PULSES_ROOT settings ─────────────────────────────────────────────────
 #   Single-run Octopus ROOT files (one per channel). Unlike the .bin files these
 #   carry a real time axis (hist.axis().centers()), so no sampling period is needed.
-AP_ROOT_DIR      = "Processed/m204_AP"                 # folder with the .root files
+AP_ROOT_DIR      = "m204/Processed/m204_AP"                 # folder with the .root files
 AP_ROOT_PATTERN  = "Processed_*_000204_*_new.root"     # glob pattern of the files to read
 AP_ROOT_HIST     = "averagepulse_ap_medianAP"          # histogram name inside each file
 AP_ROOT_CSV_NAME = "risetime_m204_octopus.csv"         # output CSV (risetimes)

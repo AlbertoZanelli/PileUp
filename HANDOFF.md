@@ -15,7 +15,206 @@ PRECISELY, with sources, and every claim checked on the Monte Carlo, never on th
 
 ---
 
-## ★★ 2026-09-29 — WRITING TASK: the pile-up abstract and Chapter 4 (START HERE)
+## ★★★★ 2026-10-22 — THE THESIS IS FINISHED. NEW TASK: TIDY UP THE PILE-UP WORK (START HERE)
+
+**Goal.** The thesis is written and delivered (`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/`,
+Chapter 4 = pile-up). Alberto now wants to "sistemare il lavoro sul pile-up": leave this repo in a state
+that someone else (or he, in six months) can understand and rerun. Nothing new to compute.
+**FIRST THING TO DO: ask Alberto what "sistemare" means for him** — the options are listed in "Next
+steps"; do not start deleting or moving files on your own. Everything below is a measured inventory
+(2026-10-22) to make that conversation short.
+
+**Rules that still hold.** Ponytail mode. Discussion in Italian, code comments/plots in English. Alberto
+commits himself unless he explicitly says "committa"; **NEVER a `Co-Authored-By: Claude` line** (user
+memory; the history was rewritten to remove them). No training on the Mac. Ask before deleting,
+moving or `git rm`-ing anything: result folders are the thesis evidence.
+**Mac quirk:** anything that imports torch together with scipy/uproot can abort with
+`OMP: pthread_mutex_init failed` → run with `OMP_NUM_THREADS=1` (already set inside
+`plot_thesis_wiener_m205.py`). Use `/opt/homebrew/bin/python3.13` (the anaconda python has a broken numpy).
+`dvipng` is not installed: matplotlib with `text.usetex` can only write PDF.
+
+### Git state (2026-10-22)
+- `main` = `origin/main` = `e5890bc2` ("Risultati allucinazioni"), in sync. Extra local branch
+  `backup-prima-riscrittura` (pre-history-rewrite backup; Alberto can delete it with `git branch -D`).
+- `.git` is **2.3 GB** (PNG/npy history). `.gitignore` has only `Processed/` and `*.root`: missing
+  `__pycache__/` (37 untracked dirs), `.DS_Store` (tracked and modified!), LaTeX aux files in `tesi_note/`.
+- **Uncommitted, worth committing** (all from the thesis work, 2026-10-04…11):
+  `plot_thesis_loadcurve_m205.py`, `plot_thesis_hallucination_m205.py`, `plot_thesis_wiener_m205.py`
+  (thesis figures, see below), `plot_APPS_templates_m205.py`, `thesis_figures/` (6.5 MB of PDF + the
+  two small CSV caches of the Wiener script), `comparisons/APPS_templates/`,
+  `HANDOFF_richiesta_figure_wiener.md`, modified `explain_wiener_lambda_m205.py` and
+  `plot_filtered_examples_m205.py` (new r/Δt arguments; output names now carry `_r…_dt…ms`, which is why
+  the old `filtered_examples_ch34_wp{3,15}.png` show as deleted and the new ones as untracked),
+  `HANDOFF.md`.
+- **Uncommitted, check with Alberto first:** `compare_templates_m205.py` (only the config at the top:
+  SETS → OF/W/Wwna, SLIDE = False — a working state, not a fix; the regenerated PNGs in
+  `comparisons/OF-APsimfit10000led_vs_W-APsimfit10000led_vs_Wwna-APsimfit10000led/` come from it);
+  `plot_thesis_hallucination_m205.py` was edited after 2026-10-05 by someone else (another chat or
+  Alberto; untracked, so there is no diff to read: open it before touching it);
+  `2026 CROSS pile-up Analysis Alberto.xlsx` (untracked, 20 kB, content unknown).
+
+### Where the thesis numbers and figures come from (keep these)
+| what | where |
+|---|---|
+| thesis text | `../MasterThesis___Alberto_Zanelli/Chapter4/chapter4.tex`; figures copied in `Chapter4/figures/` |
+| writing handoffs | `../MasterThesis___Alberto_Zanelli/HANDOFF_cap4.md`, `HANDOFF_abstract_cap4.md`, `HANDOFF_figure_curva_carico.md` (all thesis figures: sources, numbers, caveats, the numbers corrected in the text) |
+| thesis figure scripts (PDF → `thesis_figures/`) | `plot_thesis_loadcurve_m205.py` (load curves, AP, NPS, vs V_bias), `plot_thesis_hallucination_m205.py` (Octopus AP vs fit), `plot_thesis_wiener_m205.py` (5 Wiener figures + every number of Sec. 4.4 with asserts), `tesi_note/fig_opura_vs_of.py` |
+| derivation of OPURA | `tesi_note/stimatore_verosimiglianza.tex/.pdf` (+ `fig_M_survival_ch31_wp7.pdf`) |
+| final campaigns (50 seeds × 75 points, same events) | `m205_results_octopus_APsimfit10000led_npsclean` (OF), `m205_results_wiener_APsimfit10000led_npsclean` (W, no penalty), `m205_results_wiener_APsimfit10000led_npsclean_swna1` (W + penalty), `m205_results_likelihood_APsimfit10000led_npsclean` (OPURA), `m205_results_octopus_npsclean` (OF on Octopus AP) and `m205_results_octopus_fit_npsclean` (OF on the fit): hallucination study |
+| inputs of the campaigns | `m205_NPS_clean/` (clean NPS), `m205_AP_sim/` (simulated AP; only `simAP_APsimfit10000led_*` is used, the `fitinj/rootinj/fitgen/rootgen` files are buried), `residual_scan_bessel/fits_octopus/bestfit_ch*_wp*.npy` (the fit template), `amplitudes_m205.csv` (ROI amplitude, rise/decay), `load_curve_data_m205.txt` (from the Excel), `Processed/*.root` (Octopus AP/NPS, gitignored, 2.7 GB), `m205_AP_pulses/` (single pulses from the raw binary, 336 MB) |
+| one figure still needed by the text | `scarti/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist` (read by `plot_thesis_wiener_m205.py` for the penalty share and the "two identical trainings" check) — so `scarti/` cannot be deleted blindly |
+
+### Script inventory (39 in the root, 37 in `test/`), from a 2026-10-22 scan
+**Pipeline (live, imported by others or used for the final numbers):**
+`extract_AP_pulses_m205.py` → `build_simAP_injected_m205.py` → `build_NPS_clean_m205.py` (inputs);
+`scan_residuals_bessel_m205.py` (fit template; imports `scan_residuals_m205.py`, `plot_AP_spectra_m205.py`,
+`build_medianAP_maxalign_m205.py`); `risetime_and_amplitude_.py` (amplitudes CSV);
+`analyse_BI_m205.py` (OF training), `analysis_BI_m205_wiener_regolarized.py` (Wiener training);
+`simulate_BI_error_m205.py` (MC + OPURA, imported by 11 scripts), `check_mc_progress_m205.py`;
+`compare_templates_m205.py` (comparisons; imported by the thesis scripts and
+`plot_BI_distributions_m205.py`), `check_training_convergence_m205.py`, `validate_lambda_curve_m205.py`;
+`src/` (analysis, simulation, dataset, pileup_likelihood, plots), `utility/`.
+**Figures / explanations (live):** the four thesis scripts above, `show_likelihood_m205.py`,
+`explain_wiener_lambda_m205.py`, `plot_filtered_examples_m205.py`, `plot_APPS_templates_m205.py`,
+`plot_BI_distributions_m205.py`, `make_slide_figures_m205.py` (slides; still points to some folders that
+moved to `scarti/`).
+**Probably obsolete — verify before removing (they point to folders that are now in `scarti/` or no
+longer exist, e.g. `m205_results_octopus`, `m205_results_wiener`, `_wiener_freq`, `_wiener_root_*`):**
+`analyse_BI_m205_wiener.py`, `analyse_BI_m205_wiener_freq.py`, `analysis_BI_m205_wiener_regolarized_copy.py`
+(a copy), `diagnose_lambda_collapse_m205.py` (its folder-name parser no longer recognises
+`_APsimfit10000led`; superseded by `plot_thesis_wiener_m205.py`), `compare_wiener_vs_optimum_m205.py`,
+`compare_AP_noise_ch34_ch91_m205.py`, `analyze_timing_SNR_m205.py`, `plot_timing_weight_allWP_m205.py`,
+`scan_R_vs_beta_m205.py`, `compare_BI_vs_hfpower_m205.py`, `compare_argonauts_vs_octopus_m205.py`,
+`analyze_BI_singlerun.py`, `plot_BI_results.py` (but imported by `compare_wiener_vs_optimum_m205.py`),
+`plot_load_curve_full_m205.py` (reads the old Octopus-NPS CSV; superseded by `plot_thesis_loadcurve_m205.py`,
+but it is the one that wrote `load_curve_data_m205.txt` from the Excel), `root_pulse_fit.py`, `FitPulse.C`.
+NB: the folder references were found by grep and include comments/docstrings: open each file. In
+`simulate_BI_error_m205.py`, `compare_templates_m205.py` and `analyse_BI_m205.py` the strings
+`m205_results_octopus`/`_wiener`/`_likelihood_` are only name PREFIXES of the parsers, not folders read.
+Two pipeline scripts still WRITE into the old `m205_results_octopus/` (now `scarti/m205_results_octopus`)
+and would recreate it: `risetime_and_amplitude_.py` (LOAD_CURVE_RESULTS_DIR, the amplitudes CSV) and
+`plot_AP_spectra_m205.py` (OUTDIR).
+**`test/`:** several no longer run (HANDOFF §2026-09-24: `WP_test.py`, `grid_size_test.py`, … pass
+removed arguments; `check_family_reach_m205.py` broken since `compute_J` lost `use_interp`). Still
+running and cited in the thesis: `ablation_of_vs_wiener_m205.py`, `estimator_headroom_m205.py`,
+`check_compare_mode_m205.py`, `check_likelihood_in_mc_m205.py`.
+**Loose files in the root:** ~25 PNG/CSV of earlier diagnostics (`validation_curve_*`, `ablation_*`,
+`filtered_examples_*`, `explain_wiener_lambda_*`, `likelihood_explained_*`, `R_vs_beta_m205.png`,
+`width_estimator_explained.png`), two `.pptx` (7 MB), the load-curve Excel.
+
+### Sizes
+`Processed/` 2.7 GB (ignored), `.git` 2.3 GB, `m205_AP_pulses/` 336 MB, `scarti/` 234 MB (26 old
+result folders), `comparisons/` 137 MB, `residual_scan_bessel/` 90 MB, `m205_AP_sim/` 42 MB; every
+final result folder is 10–13 MB.
+
+### What worked in this project (keep doing it)
+Config at the top of every script; result folders named so the code can deduce what they contain
+(`describe()` / `_parse_results_name()`); one MC CSV row per seed and paired comparisons on the same
+events; figure scripts that read the campaign files and `assert` the numbers quoted in the text (the
+Wiener script caught 5 wrong numbers in the thesis draft); frozen copy of the script inside each
+result folder (`_analyse_BI_m205.py`, `_simulate_BI_error_m205.py`).
+
+### What didn't work (don't repeat)
+Moving result folders around without updating the scripts that read them (that is how many scripts
+became "probably obsolete"); suffix-based run tags that were later removed (`_hist`, RUN_TAG); committing
+regenerated PNGs (they bloat `.git`); trusting a number from a handoff without rerunning it (several
+handoff numbers were off by rounding or came from older trainings).
+
+### Next steps (proposal, to agree with Alberto)
+1. Ask what the goal is: (a) commit the thesis work as it stands; (b) a cleanup commit (gitignore,
+   remove obsolete scripts/files into `scarti/` or delete them); (c) a README for whoever continues the
+   pile-up work (the pipeline in order, with commands); (d) shrinking `.git` (needs a history rewrite
+   and a force-push: only if he asks explicitly, and the server clone must be re-cloned after).
+2. Lowest-risk first step: `.gitignore` for `__pycache__/`, `.DS_Store`, `*.aux *.log *.fls
+   *.fdb_latexmk *.out`; `git rm --cached .DS_Store`; then let Alberto commit the thesis scripts and
+   `thesis_figures/`.
+3. For each "probably obsolete" script: open it, check whether it still runs or what it reads, then
+   propose keep / move to `scarti/` / delete, as a list for Alberto to approve.
+4. A short `README.md`: inputs → training → MC → comparison → thesis figures, one command per step, the
+   six final result folders and what each one is. This `HANDOFF.md` is the raw material, but it is a
+   1200-line log, not documentation.
+5. The server copy (`/data/users/azanelli/PileUp`) has the same history; anything removed here must be
+   pulled there (or decided separately).
+
+---
+
+## ★★★ 2026-09-30 — STATE AND SERVER TODO (history: the server runs are done)
+
+**Where things stand.** The 50-seed MC campaign is COMPLETE for the original algorithm (OF) and for
+OPURA (75/75 points each), and the Wwna (Wiener + penalty) has its own 50-seed MC on the SAME events
+(folder moved back to the root on 2026-09-30, see "Data audit" below). Results are in
+`tesi_note/stimatore_verosimiglianza.pdf` (Sec. 11, full 75-row table) and in the WRITING TASK
+section below. The abstract handoff for the writing chat is
+`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/HANDOFF_abstract_cap4.md`.
+New figures (2026-09-30, for the relatore): `filtered_examples_ch34_wp3.png` (a simulated event
+before/after the trained filters for OF, Wiener without penalty — λ collapsed to 1e-4 — and Wiener
++ penalty; `plot_filtered_examples_m205.py [ch wp r dt_ms]`), `filtered_examples_ch34_wp15.png`
+(the slides' event, Δt 0.6 ms, 60/40), `explain_wiener_lambda_ch34_wp3.png` (what λ does: spectra,
+filter gain vs 1/|S|, deconvolution with and without noise; `explain_wiener_lambda_m205.py`).
+
+**Git (2026-09-30): the history was REWRITTEN** to drop the `Co-Authored-By: Claude` trailers
+(user's request; 15 commits; only messages changed, final tree identical). GitHub `main` =
+`2fda6f67`, 68 commits, 0 trailers; the API lists only AlbertoZanelli as contributor, the web
+sidebar may lag (GitHub cache, up to ~1 day; if it persists, ask GitHub Support to refresh). NEVER
+add a Claude co-author line again (user memory). Local backup branch on the Mac:
+`backup-prima-riscrittura` (delete with `git branch -D` when happy). 4 old server commits have
+author `zanelli@cupid-login.lngs.infn.it`, not linked to the GitHub account.
+
+### Server TODO, in this order (server copy: `/data/users/azanelli/PileUp`)
+
+**0. Realign the server clone with the rewritten history — BEFORE anything else.** The server
+still has the OLD history; a `git pull` there would mix the two.
+```
+cd /data/users/azanelli/PileUp
+git status                      # nothing to keep? (uncommitted results would be lost)
+git fetch && git reset --hard origin/main
+git config user.email "a.zanelli4@campus.unimib.it"   # so server commits count on GitHub
+```
+
+**1. DONE 2026-10-04 (pulled, results in the Data audit table). Hallucination study (skeleton 4.2) with the CURRENT algorithm — the two runs the user wants.**
+The existing folders `m205_results_octopus_npsclean` (OF trained on the real Octopus AP, "root")
+and `m205_results_octopus_fit_npsclean` (OF trained on the fit) are from the OLD code (300 steps,
+cosine lr, single-seed MC): move them away first, otherwise the new training APPENDS rows to their
+CSV and overwrites their filters.
+```
+mv m205_results_octopus_npsclean     scarti/m205_results_octopus_npsclean_300
+mv m205_results_octopus_fit_npsclean scarti/m205_results_octopus_fit_npsclean_300
+```
+Training, in `analyse_BI_m205.py` (everything else stays as it is: NPS clean, 5 channels, 500
+steps): set `TEMPLATE_SOURCE = "root"`, run `python analyse_BI_m205.py`; then set
+`TEMPLATE_SOURCE = "fit"` and run it again. The two can overlap: each launch freezes its own copy
+of the script in its results folder (`_analyse_BI_m205.py`), so queued jobs are not affected by
+the edit. Output: `m205_results_octopus_npsclean`, `m205_results_octopus_fit_npsclean`.
+Monte Carlo, in `simulate_BI_error_m205.py`:
+`RESULTS_NAME = "m205_results_octopus_npsclean"`,
+`COMPARE = ["m205_results_octopus_fit_npsclean"]`, `LIKELIHOOD = False`, `N_SEEDS = 50`
+(`GEN_TEMPLATE = "fit"`, `NSIM`, `CHUNK = 500`, `SEED = 1234` unchanged). With the same seeds the
+events are the SAME as in the existing OF/OPURA/Wwna campaign, so every comparison is paired.
+Cost without M: roughly half of the OF+M run (~6-8 min per seed per point on the nodes, ~5-7 h
+per point); only 3 nodes x 4-5 jobs are usable at the moment (the other cupid nodes are down).
+`N_SEEDS = 20` would cut it by 60% if time is short.
+What to extract afterwards (`compare_templates_m205.py`, `SETS` = the root folder, the fit folder
+and `m205_results_octopus_APsimfit10000led_npsclean`, `MC_CSV = "BI_mc_error_m205_seeds50.csv"`,
+`BI_SOURCE = "both"`): MC/analytic per template (the hallucination = analytic too optimistic with
+the noisy real AP) and MC BI root vs fit vs simulated AP. Old-code reference numbers (to be
+replaced): analytic root/fit 0.994, MC root/fit 1.004 (root worse in 50/75), MC/an root
+0.81-1.19 vs fit 0.99-1.11.
+
+**2. Optional (the user said these are NOT for the abstract; decide per time left):**
+- λ fixed to 1 on more than ch34 (Wiener program, `TRAIN_LAMBDA = False`, `LAMBDA_VALUE = 1`):
+  only if the chapter must claim it generally. Check the folder name it produces does not collide.
+- Wwna retrained with the current code (plain max, fixed kernel saving) for a like-for-like OF-vs-WF
+  comparison: not needed for the "no gain" conclusion.
+- Training systematic (OF retrained with 5-10 init seeds on a few points): needs a small code change
+  first (RUN_TAG was removed, so a second training of the same config has no folder of its own).
+
+**3. After the runs:** `git add` the new result folders on the server, commit (no Claude line),
+push; on the Mac `git pull`; then update the hallucination numbers in the WRITING TASK section, in
+`HANDOFF_abstract_cap4.md` (block 3) and, if wanted, in the note.
+
+---
+
+## ★★ 2026-09-29 — WRITING TASK: the pile-up abstract and Chapter 4
 
 **Goal.** Write the pile-up paragraph of the thesis ABSTRACT and fill Chapter 4, following the
 skeleton agreed with the relatore (below). The thesis is in English, LaTeX, at
@@ -180,7 +379,7 @@ relative to `PileUp/` unless stated.
 | skeleton item | data | status |
 |---|---|---|
 | 4.1 algorithm | text written in chapter4.tex | OK |
-| 4.2 hallucination AP/FIT | OF trained on real AP (`m205_results_octopus_npsclean`) and on fit (`m205_results_octopus_fit_npsclean`), 75 pts, MC 1 seed; figures `comparisons/OF-root_vs_OF-fit/` | usable, but OLD training code (300 steps, cosine lr) — not the algorithm of 4.3 |
+| 4.2 hallucination AP/FIT | REDONE 2026-10-04 with the current algorithm (500 steps), 75 pts x 50 seeds, same events: `m205_results_octopus_npsclean` (real AP), `m205_results_octopus_fit_npsclean` (fit); old ones in `scarti/*_300` | OK: real AP vs fit, analytic -1.3% (better in 44/75) but MC +2.5% (worse in 75/75, 74 beyond two widths); MC/an 1.09 (to 1.34) vs 1.04; simulated AP = fit to 0.00%. A few low-bias points (ch31 WP1-5, ch71 WP3, ch91 WP1) are a bad training with the real AP (analytic up to +112%, MC up to +82%), not the typical hallucination |
 | 4.3 analytic vs MC, OF on LC | `m205_results_octopus_APsimfit10000led_npsclean`: 75 pts, 50 seeds, analytic + MC | OK, complete |
 | 4.4.2 training curves | loss and λ per step: `..._swna1/training_history`, `training_convergence_ch*.png` | OK |
 | 4.4.3 validation vs training | `validation_curve_ch34_wp15_*`, `ch91_wp15_*` | OK, but 2 points, 1 seed |
@@ -215,7 +414,7 @@ interpolated peak and with the old kernel-saving bug (kernel one λ step ahead o
 blocks in the order the user wants, numbers and cautions per block).
 
 ### Error bars — state the choice explicitly in the thesis
-- Default now (`compare_templates_m205.py`, `ERROR_BAR = "width"`, committed 668d95f5): the WIDTH
+- Default now (`compare_templates_m205.py`, `ERROR_BAR = "width"`, committed 3830c09d (hash after the 2026-09-30 history rewrite)): the WIDTH
   (P84-P16)/2 of the per-seed ΔBI distribution = the uncertainty of ONE simulation of 50 000
   pile-ups. The error of the median = √(π/2) width/√50 ≈ 0.18 x width (option "median").
 - Measured: the width scales as 1/√NSIM (ch31 wp7, 2000 vs 8000 events per seed: 1.43% vs 0.69%,
@@ -259,7 +458,7 @@ blocks in the order the user wants, numbers and cautions per block).
 
 ---
 
-## ★ STATE ON 2026-09-23 (last commit `a06d0bd`, pushed) — technical background
+## ★ STATE ON 2026-09-23 (last commit then `a06d0bd`, now `4028e4ee` after the 2026-09-30 history rewrite) — technical background
 
 **Goal now.** Put a defensible pile-up-rejection result in the thesis. Two threads converged:
 (1) is the trainable Wiener filter really better than the optimum filter (OF)? (2) is there a

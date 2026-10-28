@@ -7,7 +7,7 @@ Alla fine produce, per ogni WP, una canva 2x2 coi quattro fit e i rispettivi res
 
 Rispetto alla versione precedente di questo file (scan su tutte le combinazioni n_real x cc x
 nzer, AP dal ROOT, errore = sigma di baseline costante) porta tutte le modifiche validate in
-test/fit_one_pulse_m205.py:
+test/fit/fit_one_pulse_m205.py:
 
   1. DATO: l'AP allineato al MASSIMO prodotto da build_medianAP_maxalign_m205.py
      (m205_AP_pulses/medianAP_maxalign_ch<ch>_wp<wp>.npy), non l'AP di Octopus dal ROOT.

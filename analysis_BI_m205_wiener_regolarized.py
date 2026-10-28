@@ -150,7 +150,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
 TEMPLATE_SOURCE = "sim"       # "fit" | "root" | "sim"
-SIM_SOURCE      = "APsimfit10000led"   # tag dell'AP simulato, cioe' il pezzo <tag> in
+SIM_SOURCE      = "APsimfit10000ledv2" # tag dell'AP simulato, cioe' il pezzo <tag> in
                                    # m205_AP_sim/ch<ch>/simAP_<tag>_ch<ch>_wp<wp>.npy.
                                    # Prodotto da build_simAP_injected_m205.py:
                                    #   APsim<template><N>   MODE="mc"        (consigliato)
@@ -299,6 +299,20 @@ VAL_SEED  = 9001      # tenerlo FUORI dall'intervallo SEED ... SEED + N_SEEDS - 
 # La cartella prende il suffisso "_eta<valore>" quando ETA_MIN != 1e-2.
 ETA_MIN = 1e-2
 
+# Ritardo massimo del pile-up. "rise" = il rise time 10-90% del punto (canale, WP), da
+# amplitudes_m205.csv (utility.functions.dt_max_for): il pile-up non risolto e' quello con i due
+# impulsi entro il tempo di salita, la stessa definizione del paper (che con rise time 0.5-0.8 ms
+# usava 0.8 ms per tutti). Un numero [s] = lo stesso per tutti i punti: 8e-4 sono le campagne della
+# tesi. La griglia dei ritardi ha sempre N_T = 100 punti, qualunque sia il ritardo massimo.
+# La cartella prende il suffisso "_dtrise" (o "_dt<ms>ms"), cosi' non si mescola con le vecchie.
+T_MAX = "rise"
+
+# Condizioni di CUPID: l'ampiezza del CSV si moltiplica per utility.functions.cupid_factor(canale)
+# (LY 0.36 e guadagno NTL della baseline CUPID). La cartella prende il suffisso "_cupid": il Monte
+# Carlo lo riconosce e usa i fotoni di CUPID. False -> m205 com'e' misurata.
+# RIMANDATO: il guadagno G_LMO va ancora deciso (vedi tesi_note/riscalamento_CUPID.md).
+CUPID = False
+
 _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                 sim_folder_tag(SIM_SOURCE))
                + ("_R" if USE_R else "")
@@ -307,7 +321,9 @@ _TAG        = ((TEMPLATE_SOURCE if TEMPLATE_SOURCE != "sim" else
                   ("_sbar%g" % S_PENALTY[1] if S_PENALTY[0] == "barrier" else "_swna%g" % S_PENALTY[1]))
                + ("" if TRAIN_LAMBDA else "_lam%g" % LAMBDA_VALUE)
                + ("_ph" if PHASE else "")
-               + ("" if ETA_MIN == 1e-2 else "_eta%g" % ETA_MIN))
+               + ("" if ETA_MIN == 1e-2 else "_eta%g" % ETA_MIN)
+               + ("" if T_MAX == 8e-4 else "_dtrise" if T_MAX == "rise" else f"_dt{T_MAX * 1e3:g}ms")
+               + ("_cupid" if CUPID else ""))
 OUTPUT_DIR  = os.path.join(BASE_DIR, f"m205_results_wiener_{_TAG}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
@@ -330,7 +346,7 @@ AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 3         # GB per job
+RAM_GB            = 8         # GB per job (N_T = 295: l'OF ne usa 4.3 di picco; Wiener di piu')
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
@@ -441,7 +457,8 @@ EPS_R  = 1e-12     # solo guardia contro 0/0, frazione di max(|S|^2_n): deve res
                    # sotto il minimo di beta*NPS_n/N (~1e-7 su m205), altrimenti fa da
                    # secondo gate indesiderato (a 1e-6 sposta R fino a 0.4 in alta frequenza)
 
-T_MIN, T_MAX, N_T = 0, 8e-4, 100
+T_MIN = 0
+N_T = 100               # punti della griglia dei ritardi [0, dt_max], fissi
 R_MIN, R_MAX, N_R = 0.0, 0.5, 100
 
 # Colonne del CSV dei risultati
@@ -530,8 +547,9 @@ def make_s_penalty():
 # ═════════════════════════════════════════════════════════════════════════════
 # Quantità condivise + core BI estimator  (import pesanti SOLO qui dentro)
 # ═════════════════════════════════════════════════════════════════════════════
-def build_shared(device) -> dict:
-    """Quantità condivise (poco costose): ricalcolate da ogni worker."""
+def build_shared(device, dt_max) -> dict:
+    """Quantità condivise (poco costose): ricalcolate da ogni worker. dt_max [s] = ritardo
+    massimo del pile-up del punto (fn.dt_max_for)."""
     import torch
     from scipy.stats import norm
     from utility.double_beta_spectrum import pdf_ratio2b
@@ -541,7 +559,8 @@ def build_shared(device) -> dict:
     ratio_distribution /= np.mean(ratio_distribution)
     return {
         "N_sigma": N_sigma,
-        "t_torch": torch.linspace(T_MIN, T_MAX, N_T, dtype=torch.cfloat, device=device),
+        "dt_max": dt_max,
+        "t_torch": torch.linspace(T_MIN, dt_max, N_T, dtype=torch.cfloat, device=device),
         "r_torch": torch.linspace(R_MIN, R_MAX, N_R, dtype=torch.cfloat, device=device),
         "ratio_distribution_torch": torch.tensor(
             ratio_distribution, dtype=torch.cfloat, device=device
@@ -549,7 +568,7 @@ def build_shared(device) -> dict:
     }
 
 
-def make_validator(channel, wp, S_train, nps, signal_amp, rows):
+def make_validator(channel, wp, S_train, nps, signal_amp, rows, dt_max):
     """Callback da passare a optimize_filters_wiener[_lambda]: ogni VAL_EVERY passi applica i
     filtri correnti al banco di eventi e appende una riga a `rows`.
 
@@ -573,9 +592,11 @@ def make_validator(channel, wp, S_train, nps, signal_amp, rows):
               "STESSO template, la curva non misura piu' l'overtraining")
     gen = np.load(gen_path)
     S_gen, w_gen, _ = an.compute_H(gen, nps, np.hanning, sampling_rate=SAMPLING_RATE)
+    import utility.functions as fn
+    K = fn.K_for(dt_max)                   # K della finestra [0, dt_max]
     banks = []
-    for dt_max in (0.0, T_MAX):
-        pulses = sim.build_event_bank(S_gen, nps, w_gen, signal_amp, VAL_NSIM, dt_max,
+    for dt in (0.0, dt_max):
+        pulses = sim.build_event_bank(S_gen, nps, w_gen, signal_amp, VAL_NSIM, dt,
                                       seed=VAL_SEED)
         d = ds.NumpyDataset(pulses)
         d.win_length = pulses.shape[1]
@@ -588,15 +609,9 @@ def make_validator(channel, wp, S_train, nps, signal_amp, rows):
         bi, _ = an.compute_BI(pileups, singles, ACCEPTANCE, k,
                               f1.cpu().numpy(), f2.cpu().numpy(), window_fct=np.ones)
         v1, v2, _ = an.compute_vars_wiener(W_unit, S_train, nps_t, f1, f2)
-        rows.append(dict(step=step, lam=lam, BI_an=J * fn_K(), BI_mc=bi,
+        rows.append(dict(step=step, lam=lam, BI_an=J * K, BI_mc=bi,
                          s1=float(v1) ** 0.5 / signal_amp, s2=float(v2) ** 0.5 / signal_amp))
     return validate
-
-
-def fn_K():
-    """Fattore K del BI (utility.functions.K), importato pigramente come il resto."""
-    import utility.functions as fn
-    return fn.K
 
 
 def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
@@ -639,7 +654,8 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     #   f1, f2 e lambda sono ottimizzati insieme minimizzando J.
     hist = {}                      # loss (J + penalita') e s1, s2 passo per passo
     val_rows = []                  # curva di validazione (vuota se VALIDATE = False)
-    validate = make_validator(channel, wp, S_torch, nps, signal_amp, val_rows) if VALIDATE else None
+    validate = (make_validator(channel, wp, S_torch, nps, signal_amp, val_rows, shared["dt_max"])
+                if VALIDATE else None)
     t_train = time.perf_counter()          # tempo del solo addestramento -> colonna train_s
     if not TRAIN_LAMBDA:
         # ── lambda FISSA ──────────────────────────────────────────────────────
@@ -702,7 +718,7 @@ def estimate_BI_for_wp(channel, wp, vbias, meanpulse, nps, signal_amp, n_events,
     s1 = float(var1) ** 0.5 / signal_amp
     s2 = float(var2) ** 0.5 / signal_amp
 
-    BI_estimate = float(J_values[-1]) * fn.K
+    BI_estimate = float(J_values[-1]) * fn.K_for(shared["dt_max"])   # K della finestra [0, dt_max]
 
     return {
         "channel": channel,
@@ -759,6 +775,9 @@ def run_worker(channel: int, wp: int):
         signal_amp = amps.get((int(channel), round(vbias, 3)))
         if signal_amp is None:
             raise RuntimeError(f"Nessuna ampiezza nel CSV per (ch {channel}, V_bias {vbias:.3f})")
+        import utility.functions as fn
+        if CUPID:
+            signal_amp *= fn.cupid_factor(channel)
 
         # 2. File ROOT del canale
         filepath = root_file_for_channel(channel)
@@ -766,7 +785,7 @@ def run_worker(channel: int, wp: int):
             raise RuntimeError(f"File ROOT non trovato per il canale {channel}")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        shared = build_shared(device)
+        shared = build_shared(device, fn.dt_max_for(T_MAX, channel, vbias))
 
         # 3. Estrazione Meanpulse + NPS
         #    Il template viene dal fit oppure dall'AP di Octopus (TEMPLATE_SOURCE); la NPS

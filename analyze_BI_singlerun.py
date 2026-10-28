@@ -56,13 +56,13 @@ SCRIPT_PATH = os.path.abspath(__file__)
 RUN_LABEL  = "m204"     # <-- etichetta usata nei file di output (cambiala per run)
 
 # Output dipendente dalla MODE: cosi' octopus e argonauts non si sovrascrivono.
-OUTPUT_DIR  = os.path.join(BASE_DIR, f"{RUN_LABEL}_results_{MODE}")
+OUTPUT_DIR  = os.path.join(BASE_DIR, "m204", f"{RUN_LABEL}_results_{MODE}")
 LOG_DIR     = os.path.join(OUTPUT_DIR, "logs")     # stdout/stderr dei job
 JOBS_DIR    = os.path.join(OUTPUT_DIR, "jobs")     # script .sh temporanei
 OUTPUT_CSV  = os.path.join(OUTPUT_DIR, f"BI_results_{RUN_LABEL}_{MODE}.csv")
 
 # ── OCTOPUS (ROOT) ────────────────────────────────────────────────────────────
-OCTO_DATA_DIR  = os.path.join(BASE_DIR, "Processed")
+OCTO_DATA_DIR  = os.path.join(BASE_DIR, "m204", "Processed")
 OCTO_AP_DIR    = os.path.join(OCTO_DATA_DIR, "m204_AP")     # sottocartella con gli AP
 OCTO_NPS_DIR   = os.path.join(OCTO_DATA_DIR, "m204_ANPS")   # sottocartella con gli ANPS
 OCTO_MEAS_NAME = "000204"          # <-- numero della run (come nei nomi dei .root)
@@ -71,7 +71,7 @@ HIST_PULSE_NAME = "averagepulse_ap_medianAP"
 HIST_NPS_NAME   = "averagepowerspectrum_anps_medianpower"
 
 # ── ARGONAUTS (.bin) ──────────────────────────────────────────────────────────
-ARGO_DATA_DIR  = os.path.join(BASE_DIR, "NuoveAnalisiArgonauts_m204")
+ARGO_DATA_DIR  = os.path.join(BASE_DIR, "m204", "AnalisiArgonauts_m204")
 ARGO_MEAS_NAME = "000204"            # <-- prefisso della run (come nei nomi dei .bin)
 ARGO_BIN_DTYPE = np.float64          # dtype di np.fromfile (default = float64)
 

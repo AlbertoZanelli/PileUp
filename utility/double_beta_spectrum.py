@@ -161,6 +161,29 @@ def build_ratio_distribution():
 
 
 pdf_ratio2b, cdf_ratio2b, inverse_cdf_ratio2b = build_ratio_distribution()
+
+
+def build_sum_energy_distribution(e_lo, e_hi, n_grid=301):
+    """
+    Distribuzione dell'energia SOMMA E = E1 + E2 di due decadimenti 2nbb indipendenti, ristretta
+    alla finestra [e_lo, e_hi] (MeV). E' la ricetta di Ahmine et al. 2023 (EPJC 83, 373, sez. 4.2),
+    citata dal paper per i suoi eventi: si estraggono due energie dallo spettro g e si tengono le
+    coppie la cui somma cade nella ROI. La densita' di E e' quindi la convoluzione
+        p(E) ∝ (g * g)(E) = ∫ g(x) g(E - x) dx ,
+    che nella ROI di 30 keV scende di circa il 5% (1.027 a 3019 keV, 0.974 a 3049, rispetto a 3034).
+
+    Returns
+    -------
+    inverse_cdf : function
+        u ∈ [0, 1] -> E [MeV] in [e_lo, e_hi].
+    """
+    x = np.linspace(0, L, 20001)
+    E = np.linspace(e_lo, e_hi, n_grid)
+    dens = np.array([integrate.trapezoid(g(x) * g(e - x), x) for e in E])   # g = 0 fuori da (0, L)
+    cdf = np.concatenate([[0.0], np.cumsum(0.5 * (dens[1:] + dens[:-1]) * np.diff(E))])
+    return interpolate.interp1d(cdf / cdf[-1], E)
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 

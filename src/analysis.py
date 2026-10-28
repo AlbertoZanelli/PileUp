@@ -1143,7 +1143,8 @@ def get_PSD(dataset, H_unit, f1, f2, batch_size=128, window_fct=np.ones):
 
 def get_PSD_interpole(dataset, H_unit, f1, f2, pulse_center_ratio=0.5, pulse_start_pos = -100,
                       batch_size=128, interpolation_range=5, jitter_max=20,
-                      filter=None, n_deriv = 0, filter_prederiv=None, window_fct=np.ones):
+                      filter=None, n_deriv = 0, filter_prederiv=None, window_fct=np.ones,
+                      pre_baseline=False):
     """
     Computes the Pulse Shape Discriminator (PSD) for the given dataset.
 
@@ -1181,7 +1182,11 @@ def get_PSD_interpole(dataset, H_unit, f1, f2, pulse_center_ratio=0.5, pulse_sta
         if type(pulses) is list:
             pulses = pulses[0]
         pulses = pulses.numpy()
-        pulses -= np.mean(pulses[:baseline_index], axis=-1, keepdims=True)
+        # pre_baseline=False (campagne della tesi): pulses[:baseline_index] taglia le RIGHE, non
+        # i campioni, quindi la baseline e' la media di tutta la finestra, impulso compreso.
+        # pre_baseline=True: media dei campioni prima dell'impulso, [0, baseline_index).
+        pulses -= (np.mean(pulses[:, :baseline_index], axis=-1, keepdims=True) if pre_baseline
+                   else np.mean(pulses[:baseline_index], axis=-1, keepdims=True))
         if filter_prederiv is not None:
             pulses = np.fft.ifft(filter_prederiv * np.fft.fft(pulses, axis=-1), axis=-1).real
         pulses = np.diff(pulses, n=n_deriv, prepend=np.zeros((pulses.shape[0], n_deriv)), axis=-1)

@@ -45,7 +45,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
 SETS = ["m205_results_octopus_APsimfit10000led_npsclean",
-        "m205_results_likelihood_APsimfit10000led_npsclean"]
+        "m205_results_wiener_APsimfit10000led_npsclean",
+        "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
 
 #SETS = ["m205_results_octopus_npsclean@fit",
 #        "m205_results_octopus_fit_npsclean@fit"]
@@ -71,7 +72,7 @@ PAIRS = None
 #   "both"     -> tutti e due: MARKER = Monte Carlo, LINEA = analitico, stesso colore per set.
 #                 E' il modo per vedere a colpo d'occhio dove i due divergono, cioe' dove il
 #                 modello sta mentendo. I due pannelli di sotto (z e Delta BI) restano sul MC.
-SLIDE = True             # True  -> figura PER SLIDE: un pannello BI grande + un pannello Delta BI,
+SLIDE = False             # True  -> figura PER SLIDE: un pannello BI grande + un pannello Delta BI,
                          #          font e marker grandi, niente z ne' note fitte (plot_bi_slide);
                          #          la griglia dei filtri non viene disegnata (non e' roba da slide).
                          # False -> figura da DOCUMENTO: 3 pannelli (BI, z, Delta BI) fitti (plot_bi).
@@ -138,10 +139,10 @@ def describe(spec):
             break
     else:
         raise SystemExit(f"[ERROR] nome non riconosciuto: {folder}")
-    # Suffissi del solo training (_lam<v>, _ph, _eta<v>): si staccano subito, altrimenti finiscono
-    # nel nome del template; restano pero' nell'etichetta, altrimenti due set diversi si
-    # chiamerebbero uguale.
-    x = re.search(r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+)+$", tag)
+    # Suffissi del solo training (_lam<v>, _ph, _eta<v>, _dt<ms>ms, _cupid): si staccano subito,
+    # altrimenti finiscono nel nome del template; restano pero' nell'etichetta, altrimenti due set
+    # diversi si chiamerebbero uguale.
+    x = re.search(r"(_lam[0-9.eE+-]+|_ph|_eta[0-9.eE+-]+|_dt(?:rise|[0-9.]+ms)|_cupid)+$", tag)
     tag, run = (tag[:x.start()], x.group(0)) if x else (tag, "")
     m = re.search(r"_(sbar|swna)[0-9.eE+-]+$", tag)
     pen_tag, pen_label = PENALTY.get(m.group(1), ("", "")) if m else ("", "")
