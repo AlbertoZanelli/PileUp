@@ -124,6 +124,7 @@ BESSEL_ORDER = 6         # FISSO
 FCUT         = 2500      # Hz, FISSO
 
 PARAM_BOUND = 2 * np.pi * SAMPLING_RATE / 2   # 31416 rad/s = Nyquist: limite fisico
+EXP_FLOOR   = -600.0                          # esponenti piu' negativi -> termine nullo (vedi decay)
 T0_WINDOW   = 0.01                            # t0 vincolato a +-10 ms attorno al picco
 
 # ── Errori per time-bin dai singoli impulsi
@@ -142,9 +143,12 @@ sc.SUBMIT_MODE  = "qsub"   # "qsub" sul server, "local" per eseguire tutto in se
 sc.QUEUE        = "cupid"
 sc.WALLTIME     = "02:00:00"   # un fit (28 start) dura ~1 min in locale
 sc.RAM_GB       = 1            # misurati ~0.3 GB di picco per job (time+freq, 10p z6)
-sc.MAX_PARALLEL_JOBS = 135
+sc.MAX_PARALLEL_JOBS = 100   # coda cupid: 150 e 200 falliscono (max_queuable = 200 vale per TUTTI gli utenti)
 sc.JOB_NAME_PREFIX   = "BSCAN"
-sc.ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
+sc.ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh",
+                        # un thread per job: il job chiede 1 cpu, ma numpy/scipy (BLAS) ne aprirebbero
+                        # quanti sono i core del nodo, in concorrenza con gli altri job sullo stesso nodo
+                        "export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1"]
 sc.SCRIPT_PATH  = os.path.abspath(__file__)     # i job rilanciano QUESTO file
 sc.BASE_DIR     = BASE_DIR
 sc.LOG_DIR      = LOG_DIR
@@ -309,13 +313,21 @@ def make_pulse_bessel(bessel_order, fcut, zeros, poles):
     B = np.sum(coef, axis=1)
     C = -np.sum(coef, axis=0)
 
+    def decay(p, x):
+        """exp(p x), con gli esponenti sotto EXP_FLOOR messi a zero PRIMA dell'esponenziale:
+        altrimenti nella coda nascono numeri subnormali (< 1e-308), che sui processori x86 del
+        cluster costano decine di volte un'operazione normale (fit da ~1 min a ~30 min); sul Mac
+        (ARM) no. e^-600 ~ 1e-261: i termini azzerati non contano."""
+        a = p[:, None] * x
+        return np.exp(np.where(a.real < EXP_FLOOR, -np.inf, a))
+
     def f_raw(tt):
         tt = np.asarray(tt, float)
         out = np.zeros_like(tt, dtype=complex)
         m = tt >= 0
         x = tt[m]
-        out[m] = (np.sum(B[:, None] * np.exp(poles[:, None] * x), axis=0)
-                  + np.sum(C[:, None] * np.exp(p_filt[:, None] * x), axis=0))
+        out[m] = (np.sum(B[:, None] * decay(poles, x), axis=0)
+                  + np.sum(C[:, None] * decay(p_filt, x), axis=0))
         return out.real
 
     # Normalizzazione del picco con minimize_scalar (non su griglia): i poli sono tutti REALI,

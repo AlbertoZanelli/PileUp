@@ -347,7 +347,7 @@ SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in se
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 3         # GB per job (N_T = 295: l'OF ne usa 4.3 di picco; Wiener di piu')
-MAX_PARALLEL_JOBS = 135
+MAX_PARALLEL_JOBS = 100
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
 EXPORT_ENV        = True      # aggiunge "-V" al qsub: esporta l'ambiente corrente al job

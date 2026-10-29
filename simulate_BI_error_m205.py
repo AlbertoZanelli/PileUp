@@ -174,7 +174,7 @@ SUBMIT_MODE       = "qsub"  # "qsub" = un job per punto ; "local" = in sequenza,
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 2       # con CHUNK = 500 il picco e' ben sotto
-MAX_PARALLEL_JOBS = 150
+MAX_PARALLEL_JOBS = 100
 SLEEP_INTERVAL    = 20      # s fra due controlli degli slot liberi
 JOB_NAME_PREFIX   = "MC"    # nome dei job, e filtro di qstat per contarli
 EXPORT_ENV        = True    # "-V" al qsub: il job eredita l'ambiente
