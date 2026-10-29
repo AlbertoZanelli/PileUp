@@ -162,7 +162,7 @@ AMP_CSV = next((p for p in (os.path.join(BASE_DIR, "amplitudes_m205.csv"),
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 6         # GB per job (N_T = 295: misurati 4.3 GB di picco, ch31 wp7)
+RAM_GB            = 3         # GB per job (N_T = 295: misurati 4.3 GB di picco, ch31 wp7)
 MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BI" + {"root": "", "fit": "F", "sim": "S"}[TEMPLATE_SOURCE]   # nome job / qstat

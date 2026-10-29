@@ -165,7 +165,7 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
           "(inj/gen). Si legge lo stesso, ma i tag nuovi sono APsim<template><N>.")
 
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
-ONLY_CHANNELS   = [34]
+ONLY_CHANNELS   = [31, 34, 71, 83, 91]
 
 FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
@@ -222,7 +222,7 @@ NPS_PATTERN = os.path.join("ch{ch}", "nps_ch{ch}_wp{wp}.npy")
 #                             dire senza scala -- il peso W ne fissa una implicita,
 #                             s_eff ~ sqrt(J/2W) con J ~ 0.3 -- e a differenza della barriera
 #                             distorce (poco) anche i WP sani.
-S_PENALTY = None #("wna", 1.0)
+S_PENALTY = ("wna", 1.0)
 
 def sim_folder_tag(tag):
     """Pezzo di nome della cartella dei risultati per un template simulato.
@@ -239,7 +239,7 @@ def sim_folder_tag(tag):
 # identica a 1e-6), quindi fissarla non toglie nulla al risultato RAGGIUNGIBILE; cambia pero' la
 # dinamica. MISURATO su ch31 wp29 (griglia ridotta, 1500 passi): a lambda fissa il costo finale
 # e' +1.15% e non raggiunge il livello della lambda libera -> con questa scelta servono piu' passi.
-TRAIN_LAMBDA = False      # True  -> lambda addestrabile: optimize_filters_wiener_lambda
+TRAIN_LAMBDA = True      # True  -> lambda addestrabile: optimize_filters_wiener_lambda
                          # False -> lambda FISSA a LAMBDA_VALUE: optimize_filters_wiener, dove
                          #          lambda non e' proprio un parametro e il kernel e' costante
 LAMBDA_VALUE = 1.0       # valore iniziale se addestrabile, valore FISSO altrimenti
@@ -346,7 +346,7 @@ AMP_CSV = os.path.join(BASE_DIR, "amplitudes_m205.csv")
 SUBMIT_MODE       = "qsub"   # "qsub" = un job per nodo ; "local" = esegui in sequenza (SOLO debug, pesante!)
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
-RAM_GB            = 8         # GB per job (N_T = 295: l'OF ne usa 4.3 di picco; Wiener di piu')
+RAM_GB            = 3         # GB per job (N_T = 295: l'OF ne usa 4.3 di picco; Wiener di piu')
 MAX_PARALLEL_JOBS = 135
 SLEEP_INTERVAL    = 20        # s tra un controllo di slot e l'altro
 JOB_NAME_PREFIX   = "BIW" + {"fit": "F", "root": "R", "sim": "S"}[TEMPLATE_SOURCE]  # nome job / qstat
