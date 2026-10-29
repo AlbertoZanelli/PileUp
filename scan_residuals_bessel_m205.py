@@ -22,6 +22,14 @@ test/fit/fit_one_pulse_m205.py:
   6. Diagnostica per ogni fit: RAILING (parametri sul bound), ERRORI dei parametri dalla
      covarianza (J^T J)^-1 e NUMERO DI CONDIZIONE (segnala i parametri non identificabili).
   7. NIENTE coppie complesse coniugate: solo poli reali (le CC non convergevano).
+  8. CRITERIO "time+freq" (CRITERION): al chi^2 nel tempo si somma un chi^2 in FREQUENZA, con la
+     varianza dell'AP per frequenza stimata dai singoli impulsi (freq_sigma). Il chi^2 nel tempo,
+     campione per campione, tratta come indipendenti campioni con rumore correlato: le migliaia di
+     campioni della coda pesano piu' dei ~20 del fronte, e in alcuni punti (ch31 WP1-9, ch71 WP3,
+     ch91 WP1) il fit sbagliava il fronte del 4-11%, con 1.3-1.6 volte la risoluzione temporale
+     dell'AP. Il modello e' l'impulso del SINGOLO evento: prima del confronto si sfuma di un
+     campione (sinc), come la mediana di impulsi che cadono a caso fra due campioni. Uscita in
+     fits_<AP_SOURCE>_tf, le cartelle del criterio "time" restano intatte.
 
 Config: CHANNELS (uno o piu' canali), AP_SOURCE ("root" = medianAP di Octopus, errori
 dall'APdistro con floor sull'RMS di baseline; "maxalign" = AP allineato al massimo dai .npy,
@@ -65,7 +73,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
 SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
 
-CHANNELS = [34, 83]        # uno o piu' canali: i file di output hanno il canale nel nome
+CHANNELS = [31, 34, 71, 83, 91]   # uno o piu' canali: i file di output hanno il canale nel nome
 DATA_DIR = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME = "000205"
 
@@ -87,9 +95,18 @@ MEAS_NAME = "000205"
 #   mediana (build_medianAP_maxalign_m205.align_on_max): AP diverso da quello del ROOT.
 AP_SOURCE = "octopus"
 
-# Le cartelle di output PORTANO L'AP_SOURCE nel nome: fit fatti su template diversi non si
-# sovrascrivono a vicenda (l'orchestratore azzera FITS_DIR a ogni lancio).
-OUTDIR    = os.path.join(SCAN_DIR, "fits_" + AP_SOURCE)
+# Criterio del fit (punto 8 in testa):
+#   "time"      -> chi^2 nel tempo, campione per campione (le campagne fatte finora, fits_<AP_SOURCE>);
+#   "time+freq" -> chi^2 nel tempo + LAMBDA_FREQ * chi^2 in frequenza (fits_<AP_SOURCE>_tf). Serve
+#                  AP_SOURCE "octopus" o "maxalign": la varianza per frequenza viene dagli impulsi.
+CRITERION   = "time+freq"
+LAMBDA_FREQ = 0.5          # peso relativo del chi^2 in frequenza (0.5 = il bilanciamento provato su
+                           # ch71 WP3 e ch31 WP5: ritrova beta dell'AP e tiene la discesa)
+FREQ_SMOOTH = 25           # bin (Hz) su cui si liscia la varianza per frequenza stimata dagli impulsi
+
+# Le cartelle di output PORTANO L'AP_SOURCE (e il criterio) nel nome: fit fatti su template o con
+# criteri diversi non si sovrascrivono a vicenda (l'orchestratore azzera FITS_DIR a ogni lancio).
+OUTDIR    = os.path.join(SCAN_DIR, "fits_" + AP_SOURCE + ("_tf" if CRITERION == "time+freq" else ""))
 FITS_DIR  = os.path.join(OUTDIR, "_fits")
 LOG_DIR   = os.path.join(OUTDIR, "logs")
 JOBS_DIR  = os.path.join(OUTDIR, "jobs")
@@ -99,7 +116,9 @@ PULSE_PATTERN = "pulses_ch{ch}_wp{wp}.npy"                # impulsi che lo forma
 SAMPLING_RATE = 10_000                                    # Hz, per l'asse dei tempi
 
 # ── Modelli da fittare: (n_poli_reali, n_zeri). Niente coppie CC.
-MODELS = [(7, 3), (7, 4), (7, 5), (8, 5), (8, 6), (9, 4), (9, 5), (10, 4), (10, 5), (10, 6)]   # 4 modelli da fittare per ogni WP
+MODELS = [(5, 2), (5, 3), (6, 2), (6, 3), (6, 4),           # modelli piu' piccoli: col criterio
+          (7, 3), (7, 4), (7, 5), (8, 5), (8, 6),           # "time+freq" il 6p z3 vale il 7p z3
+          (9, 4), (9, 5), (10, 4), (10, 5), (10, 6)]        # (ch71 WP3); il 4p z1 non basta
 
 BESSEL_ORDER = 6         # FISSO
 FCUT         = 2500      # Hz, FISSO
@@ -121,8 +140,8 @@ RESET = True               # l'orchestratore riparte da una cartella di fit puli
 # ── Cluster (la meccanica e' quella di scan_residuals_m205)
 sc.SUBMIT_MODE  = "qsub"   # "qsub" sul server, "local" per eseguire tutto in sequenza qui
 sc.QUEUE        = "cupid"
-sc.WALLTIME     = "24:00:00"
-sc.RAM_GB       = 4
+sc.WALLTIME     = "02:00:00"   # un fit (28 start) dura ~1 min in locale
+sc.RAM_GB       = 1            # misurati ~0.3 GB di picco per job (time+freq, 10p z6)
 sc.MAX_PARALLEL_JOBS = 135
 sc.JOB_NAME_PREFIX   = "BSCAN"
 sc.ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
@@ -245,6 +264,19 @@ def err_from_apdistro(ch, wp, v):
     return np.maximum(err, floor), n_ev
 
 
+def freq_sigma(ch, wp, v):
+    """Errore dell'AP per bin di FREQUENZA (bin 1 .. N/2 della rfft, senza la DC), per il criterio
+    "time+freq": varianza della mediana = 1.2533^2/N * <|FFT(impulso - scala * AP)|^2> sugli N
+    impulsi, lisciata su FREQ_SMOOTH bin. La scala di ogni impulso rispetto all'AP si toglie: la
+    normalizzazione al massimo dei singoli impulsi non e' rumore della forma."""
+    from scipy.ndimage import uniform_filter1d
+    p = load_pulses(ch, wp)
+    p = p / p.max(axis=1, keepdims=True)
+    scale = (p @ v) / (v @ v)
+    var = 1.2533 ** 2 / len(p) * np.mean(np.abs(np.fft.rfft(p - scale[:, None] * v, axis=1)[:, 1:]) ** 2, axis=0)
+    return np.sqrt(uniform_filter1d(var, FREQ_SMOOTH))
+
+
 def pulses_sigma(ch, wp, v):
     """Errore per time-bin secondo AP_SOURCE. Ritorna (err, n_impulsi)."""
     return (err_from_apdistro(ch, wp, v) if AP_SOURCE == "root"
@@ -310,12 +342,20 @@ def measure_timescales(t, v):
 # ═════════════════════════════════════════════════════════════════════════════
 # FIT di UN modello su UN WP
 # ═════════════════════════════════════════════════════════════════════════════
-def fit_model(t, v, err, n_real, nzer):
+def fit_model(t, v, err, n_real, nzer, sig_f=None):
     """Fit pesato 1/err del modello (n_real poli reali, nzer zeri) + Bessel fisso.
     theta = [t0, zeri..., poli...]. Ritorna dict con fit, chi, rms, theta, errori dei
-    parametri, numero di condizione e lista dei parametri in railing."""
+    parametri, numero di condizione e lista dei parametri in railing.
+    sig_f (freq_sigma) -> criterio "time+freq": al residuo nel tempo si aggiunge quello in
+    frequenza, (FFT(modello) - FFT(AP)) / sig_f, pesato sqrt(LAMBDA_FREQ); il modello si sfuma di
+    un campione (sinc) prima di tutti e due i confronti. "fit" e' allora l'impulso del singolo
+    evento (il template), "fit_cmp" quello sfumato che si confronta con l'AP; chi_t e chi_f sono i
+    chi dei due pezzi e chi quello complessivo, su cui si sceglie il modello."""
     t_rise, t_dec, t_peak = measure_timescales(t, v)
     sig = err if WEIGHT_FIT else np.ones_like(err)
+    if sig_f is not None:
+        box = np.sinc(np.fft.rfftfreq(len(t), 1.0 / SAMPLING_RATE) / SAMPLING_RATE)
+        V = np.fft.rfft(v)[1:]
 
     B = PARAM_BOUND
     lo = np.array([t_peak - T0_WINDOW] + [-B] * nzer + [-B] * n_real)
@@ -328,12 +368,24 @@ def fit_model(t, v, err, n_real, nzer):
         t0, zeros, poles = unpack(th)
         return make_pulse_bessel(BESSEL_ORDER, FCUT, zeros, poles)(t - t0)
 
+    def compared(th):
+        """(modello confrontato con l'AP, sua rfft senza DC): sfumato col criterio time+freq."""
+        y = model(th)
+        if sig_f is None:
+            return y, None
+        Y = np.fft.rfft(y) * box
+        return np.fft.irfft(Y, n=len(t)), Y[1:]
+
     def resid(th):
         try:
-            y = model(th)
+            y, Y = compared(th)
         except Exception:
-            return np.full(len(t), 1e3)
-        return np.nan_to_num((y - v) / sig, nan=1e6, posinf=1e6, neginf=-1e6)
+            return np.full(len(t) + (0 if sig_f is None else 2 * len(sig_f)), 1e3)
+        r = (y - v) / sig
+        if sig_f is not None:
+            D = (Y - V) / sig_f * np.sqrt(2 * LAMBDA_FREQ)   # Re e Im hanno varianza 1/2 ciascuna
+            r = np.concatenate([r, D.real, D.imag])
+        return np.nan_to_num(r, nan=1e6, posinf=1e6, neginf=-1e6)
 
     def guess(rs, ds):
         """Guess FISICI: poli reali con tau geometricamente spaziate tra salita e coda
@@ -360,9 +412,12 @@ def fit_model(t, v, err, n_real, nzer):
     if best is None:
         raise RuntimeError("nessuno start convergente")
     _, theta, fit, jac = best
+    fit_cmp, Y = compared(theta)
 
-    rms = float(np.sqrt(np.mean((fit - v) ** 2)))
-    chi = float(np.sqrt(np.mean(((fit - v) / err) ** 2)))
+    rms = float(np.sqrt(np.mean((fit_cmp - v) ** 2)))
+    chi_t = float(np.sqrt(np.mean(((fit_cmp - v) / err) ** 2)))
+    chi_f = float("nan") if sig_f is None else float(np.sqrt(np.mean(np.abs((Y - V) / sig_f) ** 2)))
+    chi = chi_t if sig_f is None else float(np.sqrt(np.mean(resid(theta) ** 2)))
 
     # ── errori dei parametri: cov = (J^T J)^-1 * s^2, pseudo-inversa via SVD. Col fit pesato
     #    s^2 ~ 1. Il numero di condizione dice se i parametri sono identificabili (>1e8 = no).
@@ -386,7 +441,8 @@ def fit_model(t, v, err, n_real, nzer):
             bad = abs(x) >= 0.999 * PARAM_BOUND or (abs(x) and 1.0 / abs(x) >= T_win)
         if bad:
             rail.append(f"{nm}={x:.4g}")
-    return {"fit": fit, "rms": rms, "chi": chi, "theta": theta, "perr": perr,
+    return {"fit": fit, "fit_cmp": fit_cmp, "rms": rms, "chi": chi, "chi_t": chi_t, "chi_f": chi_f,
+            "theta": theta, "perr": perr,
             "cond": cond, "rail": rail, "names": names}
 
 
@@ -397,17 +453,22 @@ def run_worker(ch, wp, n_real, nzer):
     try:
         t, v = load_ap(ch, wp)
         err, n_pulses = pulses_sigma(ch, wp, v)
-        res = fit_model(t, v, err, n_real, nzer)
+        if CRITERION == "time+freq" and AP_SOURCE == "root":
+            raise RuntimeError("CRITERION 'time+freq' richiede gli impulsi: AP_SOURCE 'octopus' o 'maxalign'")
+        sig_f = freq_sigma(ch, wp, v) if CRITERION == "time+freq" else None
+        res = fit_model(t, v, err, n_real, nzer, sig_f)
         os.makedirs(FITS_DIR, exist_ok=True)
         np.savez(combo_npz(ch, wp, n_real, nzer),
-                 fit=res["fit"].astype(np.float32), err=err.astype(np.float32),
-                 rms=res["rms"], chi=res["chi"], theta=res["theta"], perr=res["perr"],
+                 fit=res["fit"].astype(np.float32), fit_cmp=res["fit_cmp"].astype(np.float32),
+                 err=err.astype(np.float32), rms=res["rms"], chi=res["chi"], chi_t=res["chi_t"],
+                 chi_f=res["chi_f"], criterion=CRITERION, theta=res["theta"], perr=res["perr"],
                  cond=res["cond"], rail=np.array(res["rail"], dtype=object),
                  names=np.array(res["names"], dtype=object),
                  n_real=n_real, nzer=nzer, wp=wp, channel=ch, n_pulses=n_pulses,
                  ap_source=AP_SOURCE)
         rail = ("RAILING: " + ", ".join(res["rail"])) if res["rail"] else "no railing"
-        print(f"[OK] ch{ch} wp{wp} {label(n_real, nzer)}  chi={res['chi']:.2f}  rms={res['rms']:.2e}  "
+        print(f"[OK] ch{ch} wp{wp} {label(n_real, nzer)}  chi={res['chi']:.2f} (tempo {res['chi_t']:.2f}, "
+              f"frequenza {res['chi_f']:.2f})  rms={res['rms']:.2e}  "
               f"cond={res['cond']:.1e}  {rail}")
     except Exception as e:
         print(f"[ERROR] ch{ch} wp{wp} {label(n_real, nzer)}: {e}")
@@ -418,18 +479,22 @@ def run_worker(ch, wp, n_real, nzer):
 # PLOT: una canva 2x2 per WP (i 4 modelli, ciascuno con fit e residuo)
 # ═════════════════════════════════════════════════════════════════════════════
 def plot_wp(ch, wp):
-    """Una canva per (canale, WP): un pannello per modello (griglia 2 colonne, o 1 se il
-    modello e' uno solo), ciascuno con il fit sopra e il residuo in unita' di errore sotto."""
+    """Una canva per (canale, WP): un pannello per modello (griglia a 3 colonne, 2 o 1 se i
+    modelli sono pochi), ciascuno con il fit sopra e il residuo in unita' di errore sotto. Il
+    modello MIGLIORE (best_fit, quello che diventa bestfit_*.npy) ha la cornice verde e il titolo
+    in grassetto."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     t, v = load_ap(ch, wp)
     t_rise, t_dec, t_peak = measure_timescales(t, v)
-    ncol = 2 if len(MODELS) > 1 else 1
+    ncol = 3 if len(MODELS) > 4 else 2 if len(MODELS) > 1 else 1
     nrow = int(np.ceil(len(MODELS) / ncol)) * 2          # ogni modello = riga fit + riga residuo
-    fig, axes = plt.subplots(nrow, ncol, figsize=(7 * ncol, 5 * nrow // 2), squeeze=False,
+    fig, axes = plt.subplots(nrow, ncol, figsize=(6.5 * ncol, 5 * nrow // 2), squeeze=False,
                              sharex="col", gridspec_kw={"height_ratios": [3, 1] * (nrow // 2)})
+    best = best_fit(ch, wp)
+    best_key = best[:2] if best else None
     n_ok = 0
     for k, (n_real, nzer) in enumerate(MODELS):
         row, col = (k // ncol) * 2, k % ncol
@@ -440,7 +505,9 @@ def plot_wp(ch, wp):
                     va="center", transform=ax.transAxes)
             continue
         d = np.load(p, allow_pickle=True)
-        fit, err = np.asarray(d["fit"], float), np.asarray(d["err"], float)
+        # col criterio time+freq si confronta con l'AP il modello sfumato di un campione
+        fit = np.asarray(d["fit_cmp"] if "fit_cmp" in d.files else d["fit"], float)
+        err = np.asarray(d["err"], float)
         n_ok += 1
         ax.plot(t, v, "k.", ms=2, label=f"AP data ({AP_SOURCE})")
         ax.plot(t, fit, "r-", lw=1.4, label="fit")
@@ -448,9 +515,18 @@ def plot_wp(ch, wp):
                         label=r"fit $\pm\,3\cdot$err")
         ax.set_ylabel("pulse (peak-norm.)")
         rail = ", ".join(d["rail"].tolist()) if len(d["rail"]) else ""
-        ax.set_title(f"{label(n_real, nzer)} — RMS={float(d['rms']):.2e}  χ={float(d['chi']):.2f}"
+        chis = (f"  (t {float(d['chi_t']):.2f}, f {float(d['chi_f']):.2f})"
+                if "chi_f" in d.files and np.isfinite(float(d["chi_f"])) else "")
+        is_best = (n_real, nzer) == best_key
+        ax.set_title(("★ MIGLIORE — " if is_best else "")
+                     + f"{label(n_real, nzer)} — RMS={float(d['rms']):.2e}  χ={float(d['chi']):.2f}{chis}"
                      f"  cond={float(d['cond']):.1e}" + (f"  [RAILING: {rail}]" if rail else ""),
-                     fontsize=9.5)
+                     fontsize=9.5, fontweight="bold" if is_best else "normal",
+                     color="#0d7a52" if is_best else "black")
+        if is_best:
+            for a_ in (ax, axr):
+                for s in a_.spines.values():
+                    s.set_edgecolor("#1baf7a"); s.set_linewidth(3)
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, ls="--", alpha=0.4)
         theta = np.asarray(d["theta"], float)
@@ -470,7 +546,9 @@ def plot_wp(ch, wp):
     for col in range(ncol):
         axes[nrow - 1][col].set_xlabel("Time (s)")
     fig.suptitle(f"m205 Ch{ch} WP{wp} — pole-zero + Bessel({BESSEL_ORDER}@{FCUT}Hz), "
-                 f"AP da '{AP_SOURCE}'", fontsize=12)
+                 f"AP da '{AP_SOURCE}', criterio '{CRITERION}'"
+                 + (f" — migliore: {label(*best_key)} (χ={float(best[2]['chi']):.2f})" if best else ""),
+                 fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = os.path.join(OUTDIR, f"fit_ch{ch}_wp{wp}.png")
     fig.savefig(out, dpi=130)
@@ -574,7 +652,7 @@ def run_psd():
 def run_csv():
     out = os.path.join(OUTDIR, "fit_params.csv")
     head = ("channel,wp,vbias,ap_source,model,n_real,nzer,bessel_order,fcut,n_pulses,rms,chi,"
-            "cond,railing,t0,zeros,real_poles,param_errors")
+            "cond,railing,t0,zeros,real_poles,param_errors,criterion,chi_t,chi_f")
     lines = [head]
     for ch in CHANNELS:
         for wp in list_wps(ch):
@@ -590,7 +668,10 @@ def run_csv():
                     str(n_real), str(nzer), str(BESSEL_ORDER), str(FCUT), str(int(d["n_pulses"])),
                     f"{float(d['rms']):.6e}", f"{float(d['chi']):.4f}", f"{float(d['cond']):.3e}",
                     f'"{"; ".join(d["rail"].tolist())}"',
-                    f"{th[0]:.8f}", f'"{js(th[1:1+nzer])}"', f'"{js(th[1+nzer:])}"', f'"{js(pe)}"']))
+                    f"{th[0]:.8f}", f'"{js(th[1:1+nzer])}"', f'"{js(th[1+nzer:])}"', f'"{js(pe)}"',
+                    str(d["criterion"]) if "criterion" in d.files else "time",
+                    f"{float(d['chi_t']):.4f}" if "chi_t" in d.files else "",
+                    f"{float(d['chi_f']):.4f}" if "chi_f" in d.files else ""]))
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"CSV -> {out}")
