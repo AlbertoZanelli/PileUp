@@ -73,7 +73,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
 SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
 
-CHANNELS = [31, 71, 83, 91]   # uno o piu' canali: i file di output hanno il canale nel nome
+CHANNELS = [34]   # uno o piu' canali: i file di output hanno il canale nel nome
 DATA_DIR = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME = "000205"
 
@@ -136,7 +136,7 @@ WEIGHT_FIT = True          # fit pesato 1/err
 STARTS = [(rs, ds) for rs in (0.2, 0.3, 0.5, 1, 2, 3, 5) for ds in (0.5, 1, 2, 3)]
 MAX_NFEV = 3000
 
-RESET = True               # l'orchestratore riparte da una cartella di fit pulita
+RESET = False               # l'orchestratore riparte da una cartella di fit pulita
 
 # ── Cluster (la meccanica e' quella di scan_residuals_m205)
 sc.SUBMIT_MODE  = "qsub"   # "qsub" sul server, "local" per eseguire tutto in sequenza qui
