@@ -1,0 +1,5 @@
+Currently Loaded Modulefiles:
+ 1) cmake/3.31.4   3) fftw/3.3.10    5) gsl/2.8        
+ 2) gcc/15.2.0     4) root/6.32.04   6) python/3.12.3  
+/mnt/disk1/home/zanelli/env/lib/python3.12/site-packages/scipy/optimize/_lsq/common.py:115: RuntimeWarning: overflow encountered in power
+  phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm

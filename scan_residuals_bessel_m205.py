@@ -73,7 +73,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
 SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
 
-CHANNELS = [31, 34, 71, 83, 91]   # uno o piu' canali: i file di output hanno il canale nel nome
+CHANNELS = [31, 71, 83, 91]   # uno o piu' canali: i file di output hanno il canale nel nome
 DATA_DIR = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME = "000205"
 
@@ -143,7 +143,7 @@ sc.SUBMIT_MODE  = "qsub"   # "qsub" sul server, "local" per eseguire tutto in se
 sc.QUEUE        = "cupid"
 sc.WALLTIME     = "02:00:00"   # un fit (28 start) dura ~1 min in locale
 sc.RAM_GB       = 1            # misurati ~0.3 GB di picco per job (time+freq, 10p z6)
-sc.MAX_PARALLEL_JOBS = 100   # coda cupid: 150 e 200 falliscono (max_queuable = 200 vale per TUTTI gli utenti)
+sc.MAX_PARALLEL_JOBS = 135   # coda cupid: 150 e 200 falliscono (max_queuable = 200 vale per TUTTI gli utenti)
 sc.JOB_NAME_PREFIX   = "BSCAN"
 sc.ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh",
                         # un thread per job: il job chiede 1 cpu, ma numpy/scipy (BLAS) ne aprirebbero
