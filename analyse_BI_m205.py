@@ -73,7 +73,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 # prefisso dei job dipendono dalla modalita', cosi' le due analisi non si sovrascrivono.
 TEMPLATE_SOURCE = "sim"    # "root" | "fit" | "sim"
 
-FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
+FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus_tf")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 SIM_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
 SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
@@ -89,7 +89,7 @@ SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")
 #   suffisso -> da dove viene il RUMORE:
 #       "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #       "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
-SIM_SOURCE      = "APsimfit10000ledv2"    # tag dell'AP simulato: APsim<template><N>
+SIM_SOURCE      = "APsimfit10000ledv2tf"    # tag dell'AP simulato: APsim<template><N>
                                      # (build_simAP_injected_m205.py, MODE="mc"; "...v2": MODE="mc_v2")
 if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
     print(f"[WARN] SIM_SOURCE='{SIM_SOURCE}' e' un tag della vecchia nomenclatura "

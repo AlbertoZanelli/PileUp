@@ -15,7 +15,92 @@ PRECISELY, with sources, and every claim checked on the Monte Carlo, never on th
 
 ---
 
-## ★★★★ 2026-10-22 — THE THESIS IS FINISHED. NEW TASK: TIDY UP THE PILE-UP WORK (START HERE)
+## ★★★★★ 2026-10-29 — FIXING THE THESIS ERRORS, CAMPAIGN v2 (START HERE)
+
+**Goal.** Correct the known errors of the thesis pile-up analysis and redo the m205 campaign ("v2"):
+photon-number fluctuation, sum energy in the ROI, sub-sample shift, Δt_max = rise time of each point,
+training template built like the real AP, correct baseline in the MC. **Latest sub-task:** refit the pulse
+templates with a new fit criterion, because the old fits are wrong at 7 points (see 9 below), then
+regenerate templates → retrain → MC. Rules unchanged: Italian discussion, English plots, ponytail, Alberto
+commits/syncs unless he says "sincronizza" (then commit + push, **never a Co-Authored-By line**), no
+training on the Mac, ask before deleting/moving.
+
+### State right now (2026-10-31)
+- **Fits done, templates done, trainings ready to launch on the cluster.** Fits: `fits_octopus_tf`, 1125 npz, all 5
+  channels; ch34 rerun apart (`CHANNELS = [34]`, `RESET = False`). Its `bestfit`/canvases were rewritten locally from the npz.
+- β fit/AP (`test/fit/check_beta_fit_tf_m205.py`, `comparisons/beta_fit_tf_vs_AP_m205.{png,csv}`): median 0.982, range
+  0.847-0.995 (old fits up to 1.624). With the AP's noise added to the fit (synthetic AP), AP/fit median 1.010, range
+  0.994-1.036: compatible at 1-2%, worst ch31 WP7, but NOT within the small statistical σ (|z|<3: 7/75).
+- New tag `APsimfit10000ledv2tf`, 75 templates in `m205_AP_sim`; `FIT_DIR` -> `fits_octopus_tf` in the 4 scripts. Old
+  `ledv2` templates and results are kept. 20-step test on ch31 WP5 passed for OF and Wwna, frozen copy included.
+- Server: user `zanelli`, `cupid-login`, env `source /home/zanelli/LoadOctopus.sh`, project folder `PileUp`.
+- CSV column `beta_Hz` is actually 2π × β in Hz (rad/s), in the old results too: ch31 WP5 old 3099.5 = 2π × 493.3.
+- **Queue `cupid` limits**: `max_user_run = 80`, `max_user_queuable = 160`, `max_queuable = 200` **shared by all
+  users** → 150 and 200 parallel jobs got rejected; `MAX_PARALLEL_JOBS = 100` everywhere now works.
+- The section "2026-10-22 tidy up" below is DONE (reorganisation); its paths and some older paths in this file
+  are stale: m204 → `m204/`, tests → `test/{fit,wiener,likelihood,mc}/`, thesis plots → `thesis_figures/`, load
+  curves/Excels → `m205_load_curves/`, unused stuff → `scarti/`.
+
+### What was done (all in git)
+1. **Generation v2** — `src/simulation.simulate_frequency_pulses_v2`, `utility/double_beta_spectrum.build_sum_energy_distribution`,
+   constants in `utility/functions.py`: `Q_BB_MEV`, `E_ROI_MEV` (3.019–3.049), `PHOTON_EV = 1239.84/670`
+   (670 nm, from the relatore), `LY_KEV_MEV` = Denys' pre-NTL LY toward the close LMO (0.17/0.18/0.17/0.20/0.22,
+   sheet "Denys Comparison", CROSS status p.7), `n_photons`. Photons = Gaussian `detector_sigma`, σ_A/A = 1/√N
+   (N ≈ 280–360). Check: `test/mc/check_generator_v2_m205.py`.
+2. **Δt_max = rise time of each point** — `T_MAX = "rise"` (training scripts default; MC default still 8e-4),
+   `fn.dt_max_for`, `fn.dt_tag` → folders `_dtrise`; grid always `N_T = 100`; MC `point_dt` gives dt, K, jitter
+   per point. Old path is bit-exact (ch31 WP7 seed 1234 BI_mc = 6.794477e-05).
+3. **MC baseline bug** — thesis `get_PSD_interpole` subtracted the mean of the WHOLE window (`pulses[:4900]`
+   slices rows). New option `pre_baseline=True` (pretrigger [0, 4900)), used by `simulate_psd_v2`. Effect on BI
+   ~+0.1–0.2% at ch31 WP7.
+4. **Training template v2** — `build_simAP_injected_m205.py` `MODE = "mc_v2"`: `ledv2_pulses` + `build_mc_v2`
+   (fit × A_LED [OF median, good==1], shift τ, Gaussian noise from the NPS, − pretrigger baseline, / max, align on
+   the fit's maximum, mean of 10 000, / max). 75 files `m205_AP_sim/ch*/simAP_APsimfit10000ledv2_*.npy`.
+5. **CUPID rescaling — postponed** (`CUPID = False`). Everything in `tesi_note/riscalamento_CUPID.md`
+   (G_CUPID = 11.3 is derived from Armatol eq. 5.1/5.3, and it is an **SNR** gain; open question which G_ch).
+6. **Notebook** `tutorial_pileup_m205.ipynb` for the relatore (one point, ch31 WP7, ~15 min; Mac must stay awake).
+   Its generator script lived in a temporary scratchpad and is gone: edit the .ipynb directly.
+7. **Campaign v2 trained on the server**: `m205_results_octopus_APsimfit10000ledv2_npsclean_dtrise` (OF) and
+   `m205_results_wiener_APsimfit10000ledv2_npsclean_swna1_dtrise` (Wwna). W (no penalty) and the MC NOT run.
+   Plots: `compare_templates_m205.py` (run with SETS passed from outside, BI_SOURCE="analytic"),
+   `plot_K_rejection_m205.py` (K, BI, rejection R, rise time vs V_bias). RAM measured: 3 GB per training job.
+8. **Gains/LY from Roberto's sheets** (`~/Downloads/CROSS_data_analysis/Octopus/ResultsCaraterization.xlsx`,
+   "Noise Comparison", "Denys Comparison"; Argonauts `c2u_Run14_OF_results.xlsx` sheet NTL) — summarised in the
+   CUPID note.
+9. **Bad fits found** — at ch31 WP1–9, ch71 WP3, ch91 WP1 the old fit (time-domain χ²) has 4–17× the AP's power
+   at 0.6–2.5 kHz → time resolution β up to 1.6× the AP's → **artificially low BI** (also in the thesis: trained on
+   the real AP those points give ~2× higher BI). Diagnostics: `test/fit/check_fit_vs_AP_highfreq_m205.py`,
+   figures `comparisons/fit_vs_AP_highfreq_*.png`, `comparisons/refit_*.png`.
+10. **New fit criterion** in `scan_residuals_bessel_m205.py`: `CRITERION = "time+freq"` (time χ² + frequency χ²
+    weighted by the AP variance per frequency from the single pulses, model smeared by one sample; `LAMBDA_FREQ =
+    0.5`), 15 models (5p z2 … 10p z6), all 5 channels, output `residual_scan_bessel/fits_octopus_tf`, canvas per
+    point with the best model framed in green. Prototype on ch71 WP3 / ch31 WP5: β back to 0.96–0.97, OF-weighted
+    distance from the AP 1.8–14% → 0.07–0.8%, time χ like the old fit. `"time"` reproduces the old scan exactly.
+11. **Server slowness fixed (to confirm)**: fits took ~30 min on the cluster vs ~1 min on the Mac. Cause: subnormal
+    numbers in the model's exponentials (slow on x86, free on ARM). `EXP_FLOOR = -600` zeroes them before `exp`:
+    bit-identical, 1.7× faster on the Mac. Also `OMP/OPENBLAS/MKL_NUM_THREADS=1` in the job lines, RAM 1 GB,
+    walltime 2 h (measured 0.3 GB, ~1 min per job locally).
+
+### What didn't work (don't repeat)
+- Frequency-only χ² fit: perfect rise but decay off by 0.5–1.6% of the peak → rejected; the combined one is kept.
+- Model 4p z1: too rigid. More starts matter: with 8 starts the big models looked worse than they are.
+- Using the Tl gain of runs 92→96 for m205: run 96 was at 100/67/47 V, m205 at 120 V. And amplitude gains ≠ SNR gains.
+- Running a fit on `cupid-login` crashed it; creating files on the server with heredocs failed — put scripts in git.
+- macOS: `xargs -I` with long commands fails; zsh does not word-split `$var` (use bash -c or explicit args).
+
+### Next steps
+1. On the cluster, in `screen`: `python analyse_BI_m205.py`, then, when its jobs are nearly done,
+   `python analysis_BI_m205_wiener_regolarized.py` (Wwna). W without penalty needs `S_PENALTY = None` and its own run.
+2. Results in `m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise` and
+   `m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise`: update `SETS`/`OUT` in `plot_K_rejection_m205.py`.
+3. MC only after that, `simulate_BI_error_m205.py`: `GEN_V2 = True`, `T_MAX = "rise"`, `N_SEEDS = 50`,
+   `RESULTS_NAME`/`COMPARE` = the new folders. **Not configured yet: do not launch it as it is.**
+4. Later: CUPID rescaling (choose G_ch, SNR gain at 120 V), check that LMO scintillation pulses have the same
+   shape as LED pulses (m204 coincidences at 2615 keV), README + clean the stale paths in this file.
+
+---
+
+## ★★★★ 2026-10-22 — THE THESIS IS FINISHED. NEW TASK: TIDY UP THE PILE-UP WORK (DONE — see above)
 
 **Goal.** The thesis is written and delivered (`~/Desktop/Tesi_Erasmus/MasterThesis___Alberto_Zanelli/`,
 Chapter 4 = pile-up). Alberto now wants to "sistemare il lavoro sul pile-up": leave this repo in a state

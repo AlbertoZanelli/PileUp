@@ -53,7 +53,7 @@ from build_medianAP_maxalign_m205 import shift_pad   # traslazione senza wrap (M
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR   = os.path.join(BASE_DIR, "Processed")
 PULSE_DIR  = os.path.join(BASE_DIR, "m205_AP_pulses")
-FIT_DIR    = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
+FIT_DIR    = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus_tf")
 OUT_DIR    = os.path.join(BASE_DIR, "m205_AP_sim")
 MEAS_NAME  = "000205"
 BIN_DIR    = "/data2/LSC/DATA/RUN14/000205" #os.path.join(DATA_DIR, "Bin file")   # sul server: "/data2/LSC/DATA/RUN14/000205"
@@ -72,7 +72,7 @@ MODE     = "mc_v2"       # "mc" = impulsi generati come nel Monte Carlo | "realn
                          #        su finestre vere dal binario (serve il .bin, solo sul server)
                          # "mc_v2" = impulsi della generazione v2 (build_mc_v2): ampiezza LED dal
                          #        filtro ottimo, shift sub-campione, baseline sul pretrigger,
-                         #        allineamento sul massimo. Tag dei file: APsimfit<N>ledv2.
+                         #        allineamento sul massimo. Tag dei file: APsimfit<N>ledv2tf.
 PRE_BASELINE = 4900      # mc_v2: la baseline e' la media dei campioni [0, PRE_BASELINE), come in
                          # get_PSD_interpole e build_mean_pulse (centro 5000, pulse_start_pos -100)
 N_PULSES = 10000          # solo per MODE="mc": quanti impulsi mediare. Un intero, oppure
@@ -385,7 +385,7 @@ def main():
     if MODE == "mc_v2":
         print(f"  media di {N_PULSES} impulsi della generazione v2 (build_mc_v2): ampiezza LED dal "
               f"filtro ottimo, shift sub-campione, baseline sul pretrigger, allineati sul massimo")
-        print(f"  tag dei file: APsimfit{N_PULSES}ledv2\n")
+        print(f"  tag dei file: APsimfit{N_PULSES}ledv2tf\n")
     elif MODE == "mc":
         print(f"  media di {N_PULSES} impulsi GENERATI: template + rumore dalla NPS misurata, "
               f"ampiezza '{AP_AMPLITUDE}'")
@@ -406,7 +406,7 @@ def main():
                     raise RuntimeError("template 'fit' non trovato")
                 if MODE == "mc_v2":
                     ap, N, amp = build_mc_v2(ch, wp)
-                    res = {"fit": save_ap(ch, wp, f"APsimfit{N}ledv2", ap)}
+                    res = {"fit": save_ap(ch, wp, f"APsimfit{N}ledv2tf", ap)}
                 elif MODE == "mc":
                     res, N, amp = build_mc(ch, wp, src)
                 else:

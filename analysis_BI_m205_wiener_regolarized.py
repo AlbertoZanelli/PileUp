@@ -150,7 +150,7 @@ DATA_DIR    = os.path.join(BASE_DIR, "Processed")
 #         "...inj"  finestre VERE dal binario (NOISE_SOURCE="real"), consigliato: 1.08x il vero;
 #         "...gen"  generato dalla NPS misurata (NOISE_SOURCE="clean_nps"): 1.17x, gaussiano.
 TEMPLATE_SOURCE = "sim"       # "fit" | "root" | "sim"
-SIM_SOURCE      = "APsimfit10000ledv2" # tag dell'AP simulato, cioe' il pezzo <tag> in
+SIM_SOURCE      = "APsimfit10000ledv2tf" # tag dell'AP simulato, cioe' il pezzo <tag> in
                                    # m205_AP_sim/ch<ch>/simAP_<tag>_ch<ch>_wp<wp>.npy.
                                    # Prodotto da build_simAP_injected_m205.py:
                                    #   APsim<template><N>   MODE="mc"        (consigliato)
@@ -167,7 +167,7 @@ if TEMPLATE_SOURCE == "sim" and not SIM_SOURCE.startswith(("APsim", "APreal")):
 # Canali da elaborare: lista, oppure None/[] per TUTTI quelli con ampiezza nel CSV.
 ONLY_CHANNELS   = [31, 34, 71, 83, 91]
 
-FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
+FIT_DIR     = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus_tf")
 FIT_PATTERN = "bestfit_ch{ch}_wp{wp}.npy"
 SIM_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")
 SIM_PATTERN = os.path.join("ch{ch}", "simAP_{sim}_ch{ch}_wp{wp}.npy")

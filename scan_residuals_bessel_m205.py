@@ -73,7 +73,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 PULSE_DIR = os.path.join(BASE_DIR, "m205_AP_pulses")      # .npy di extract/build (AP + impulsi)
 SCAN_DIR  = os.path.join(BASE_DIR, "residual_scan_bessel")
 
-CHANNELS = [34]   # uno o piu' canali: i file di output hanno il canale nel nome
+CHANNELS = [31, 34, 71, 83, 91]   # uno o piu' canali: i file di output hanno il canale nel nome
 DATA_DIR = os.path.join(BASE_DIR, "Processed")
 MEAS_NAME = "000205"
 

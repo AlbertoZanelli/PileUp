@@ -183,7 +183,7 @@ OVERWRITE         = True    # True: una riga con la stessa identita' (canale, WP
 ENV_SETUP_LINES   = ["source /home/zanelli/LoadOctopus.sh"]
 
 # ── File di ingresso ─────────────────────────────────────────────────────────────────────────
-FIT_DIR        = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus")
+FIT_DIR        = os.path.join(BASE_DIR, "residual_scan_bessel", "fits_octopus_tf")
 FIT_PATTERN    = "bestfit_ch{ch}_wp{wp}.npy"
 SIM_AP_DIR     = os.path.join(BASE_DIR, "m205_AP_sim")        # build_simAP_injected_m205.py
 SIM_AP_PATTERN = os.path.join("ch{ch}", "simAP_{gen}_ch{ch}_wp{wp}.npy")
