@@ -89,12 +89,13 @@ training on the Mac, ask before deleting/moving.
 - macOS: `xargs -I` with long commands fails; zsh does not word-split `$var` (use bash -c or explicit args).
 
 ### Next steps
-1. On the cluster, in `screen`: `python analyse_BI_m205.py`, then, when its jobs are nearly done,
-   `python analysis_BI_m205_wiener_regolarized.py` (Wwna). W without penalty needs `S_PENALTY = None` and its own run.
-2. Results in `m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise` and
-   `m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise`: update `SETS`/`OUT` in `plot_K_rejection_m205.py`.
-3. MC only after that, `simulate_BI_error_m205.py`: `GEN_V2 = True`, `T_MAX = "rise"`, `N_SEEDS = 50`,
-   `RESULTS_NAME`/`COMPARE` = the new folders. **Not configured yet: do not launch it as it is.**
+1. Trainings OF and Wwna are DONE (`..._APsimfit10000ledv2tf_npsclean[_swna1]_dtrise`, 75 points each). Figures:
+   `plot_BI_vs_V_m205.py`, `plot_K_rejection_m205.py`. W without penalty (`S_PENALTY = None`) not run.
+2. MC is configured (`simulate_BI_error_m205.py`: Wwna + OF on the same events, `GEN_V2 = True`, `T_MAX = "rise"`,
+   `N_SEEDS = 50`, `NSIM = 50 000`, no M). On the cluster, in `screen`: `python simulate_BI_error_m205.py`; progress with
+   `python check_mc_progress_m205.py`. Measured on the Mac: 175 s per seed, ~2.4 h per point, 0.73 GB (`RAM_GB = 2`).
+   Note: `NSIM` is bound at definition, so overriding `m.NSIM` in a test does NOT reduce the events.
+3. Then compare with `compare_templates_m205.py` (`SETS` = the new folders, `MC_CSV = "BI_mc_error_m205_v2_seeds50.csv"`).
 4. Later: CUPID rescaling (choose G_ch, SNR gain at 120 V), check that LMO scintillation pulses have the same
    shape as LED pulses (m204 coincidences at 2615 keV), README + clean the stale paths in this file.
 

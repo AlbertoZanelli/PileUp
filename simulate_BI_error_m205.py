@@ -96,13 +96,13 @@ MEAS_NAME   = "000205"
 #      m205_results_octopus_APsimfit10000led_npsclean         -> filtro ottimo
 #      m205_results_wiener_APsimfit10000led_npsclean_swna1    -> Wiener + penalita' su s
 #    RESULTS_NAME decide anche i punti da simulare, il template di M e dove vanno log e job.
-RESULTS_NAME = "m205_results_octopus_npsclean"
+RESULTS_NAME = "m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise"
 
 # 1b) COMPARE: altre cartelle da simulare INSIEME a RESULTS_NAME. Per ogni seed gli eventi si
 #     generano UNA volta e passano per i filtri di TUTTE le cartelle, ognuna scrive nel proprio
 #     CSV: eventi identici per costruzione (e' su questo che si regge l'errore appaiato di Delta BI
 #     in compare_templates) e la generazione, ~70% del tempo, si paga una volta. [] = una sola.
-COMPARE = ["m205_results_octopus_fit_npsclean"]
+COMPARE = ["m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise"]
 
 # 2) GEN_TEMPLATE: il template che GENERA gli eventi, cioe' cosa si considera la verita'.
 #    "fit"  -> il bestfit dello scan (liscio, senza rumore finito-N): la scelta delle campagne;
@@ -146,12 +146,12 @@ N_SEEDS = 50                 # ripetizioni INDIPENDENTI: il seed SEED + i genera
                             # vedono gli STESSI eventi: il Delta BI seed per seed contiene la
                             # covarianza e la sua dispersione e' l'errore (compare_templates).
 ACCEPTANCE = 0.9            # frazione di singoli che il taglio accetta
-T_MAX      = 8e-4           # ritardo massimo del pile-up (= T_MAX del training): 8e-4 [s] nelle
+T_MAX      = "rise"           # ritardo massimo del pile-up (= T_MAX del training): 8e-4 [s] nelle
                             # campagne della tesi; "rise" = il rise time di ogni punto
                             # (fn.dt_max_for). Deve coincidere con il suffisso delle cartelle
                             # ("_dtrise", "_dt<ms>ms", niente = 8e-4): folder_info si ferma se no.
                             # K e finestra di ricerca del massimo seguono il punto (point_dt).
-GEN_V2     = False          # True -> eventi da simulate_psd_v2: fotoni (detector_sigma), energia
+GEN_V2     = True           # True -> eventi da simulate_psd_v2: fotoni (detector_sigma), energia
                             # somma nella ROI, shift sub-campione, baseline sul pretrigger.
                             # False -> la generazione delle campagne della tesi, bit per bit.
                             # Il CSV prende il suffisso "_v2". Per la campagna nuova: GEN_V2 = True,
@@ -730,7 +730,7 @@ def freeze_script():
 def make_job_lines(channel, wp):
     """Le righe dello script di un job: ambiente, poi questo file (la copia congelata) in modalita'
     worker per il punto. Usata da main."""
-    return [f"cd {BASE_DIR}"] + ENV_SETUP_LINES + [
+    return [f"cd {BASE_DIR}"] + ENV_SETUP_LINES + ["export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1"] + [
         f"{sys.executable} {SCRIPT_PATH} --worker --channel {channel} --wp {wp}"]
 
 

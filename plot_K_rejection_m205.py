@@ -19,12 +19,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SETS = {"optimum filter": ("m205_results_octopus_APsimfit10000ledv2_npsclean_dtrise", "#2a78d6", "-"),
-        "Wiener + s-penalty": ("m205_results_wiener_APsimfit10000ledv2_npsclean_swna1_dtrise", "#eb6834", "--")}
+SETS = {"optimum filter": ("m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise", "#2a78d6", "-"),
+        "Wiener + s-penalty": ("m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise", "#eb6834", "--")}
 CHANNELS = [31, 34, 71, 83, 91]
 BI_TARGET = 5e-5             # target CUPID sul pile-up
 K_COLOR = "#5f5e5a"
-OUT = os.path.join(BASE_DIR, "comparisons", "K_rejection_APsimfit10000ledv2-dtrise.png")
+OUT = os.path.join(BASE_DIR, "comparisons", "K_rejection_APsimfit10000ledv2tf-dtrise.png")
 
 
 def load(folder):
@@ -75,7 +75,7 @@ def main():
     h, l = zip(*[hl for a in ax[:, 0] for hl in zip(*a.get_legend_handles_labels())])
     fig.legend(h, l, loc="upper center", ncol=4, fontsize=9, frameon=False, bbox_to_anchor=(0.5, 1.0))
     fig.suptitle("K, BI and pile-up rejection vs bias  —  dt_max = rise time of the point, analytic model, "
-                 "template APsimfit10000ledv2", y=1.06, fontsize=12)
+                 "template APsimfit10000ledv2tf", y=1.06, fontsize=12)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     fig.savefig(OUT, dpi=150, bbox_inches="tight")
     print(f"-> {os.path.relpath(OUT, BASE_DIR)}")
