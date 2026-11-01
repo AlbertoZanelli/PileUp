@@ -127,7 +127,7 @@ GEN_TEMPLATE = "fit"
 #    lancio, tre set sugli stessi impulsi. I CSV delle cartelle di training non cambiano.
 #    Costo di M: ~0.5 ms per evento. Sul cluster un seed (OF + M, 100 000 eventi) ~12 min, cioe' ~10 h
 #    per punto con N_SEEDS = 50 (misurato 2026-09-24, prima della versione veloce di M).
-LIKELIHOOD = False
+LIKELIHOOD = True
 
 ONLY_CHANNELS = None        # lista, oppure None/[] per tutti i canali di RESULTS_NAME
 ONLY_WPS      = None        # lista, oppure None/[] per tutti i WP
@@ -174,7 +174,7 @@ SUBMIT_MODE       = "qsub"  # "qsub" = un job per punto ; "local" = in sequenza,
 QUEUE             = "cupid"
 WALLTIME          = "24:00:00"
 RAM_GB            = 2       # con CHUNK = 500 il picco e' ben sotto
-MAX_PARALLEL_JOBS = 100
+MAX_PARALLEL_JOBS = 200
 SLEEP_INTERVAL    = 20      # s fra due controlli degli slot liberi
 JOB_NAME_PREFIX   = "MC"    # nome dei job, e filtro di qstat per contarli
 EXPORT_ENV        = True    # "-V" al qsub: il job eredita l'ambiente
