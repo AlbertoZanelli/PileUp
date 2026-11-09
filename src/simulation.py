@@ -35,7 +35,7 @@ def build_event_bank(S, nps, w, signal_amp, nsim, dt_max, chunk=500, seed=1234,
 
 
 def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, signal_scale=0.002, dt_max=8e-4,
-                              fold_ratio=False):
+                              fold_ratio=False, dt_min=0.0):
     """
     Simulate frequency-domain pulse realizations with stochastic phase and noise.
 
@@ -103,7 +103,8 @@ def simulate_frequency_pulses(S, nps, detector_sigma, w, nsim=10000, seed=1234, 
         # r e 1-r descrivono lo stesso pile-up scambiando i due eventi: ripiegando su [0, 0.5]
         # si usa la stessa convenzione del calcolo ANALITICO (r_torch = linspace(0, 0.5, N_R)).
         generated_r = np.minimum(generated_r, 1.0 - generated_r)
-    generated_dt = rng.uniform(0, dt_max, nsim)
+    # dt uniforme in [dt_min, dt_max]; con dt_min = 0 gli stessi numeri di sempre (consuma le stesse estrazioni)
+    generated_dt = rng.uniform(dt_min, dt_max, nsim)
 
     # --- phase modulation due to inter-event timing ---
     exp_term = np.exp(-1j * w * generated_dt[:, None])  # (nsim, M)
@@ -118,7 +119,7 @@ _sum_energy_icdf = lru_cache(maxsize=None)(build_sum_energy_distribution)
 
 
 def simulate_frequency_pulses_v2(S, nps, w, nsim, rng, rng_x, signal_scale, dt_max,
-                                 n_photons=None, e_roi=None, q_value=3.034, shift_max=0.0):
+                                 n_photons=None, e_roi=None, q_value=3.034, shift_max=0.0, dt_min=0.0):
     """
     Variante v2 di simulate_frequency_pulses (2026-10-25): gli stessi eventi, piu' le tre aggiunte
     della generazione degli eventi del paper (Berest 2026, sez. 4.2). L'ORIGINALE non si tocca:
@@ -173,7 +174,7 @@ def simulate_frequency_pulses_v2(S, nps, w, nsim, rng, rng_x, signal_scale, dt_m
     sigma = (amp / np.sqrt(n_photons * (e / q_value)) if n_photons
              else np.zeros(nsim))                             # 2. Poisson sui fotoni
     fpulses, _, noise, r, dt = simulate_frequency_pulses(S, nps, sigma, w, nsim=nsim, seed=rng,
-                                                         signal_scale=amp, dt_max=dt_max)
+                                                         signal_scale=amp, dt_max=dt_max, dt_min=dt_min)
     tau = rng_x.uniform(0.0, shift_max, nsim) if shift_max else np.zeros(nsim)
     if shift_max:                                             # 3. shift del solo segnale
         fpulses = (fpulses - noise) * np.exp(-1j * w[None, :] * tau[:, None]) + noise

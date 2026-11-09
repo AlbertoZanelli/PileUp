@@ -13,7 +13,8 @@ COSA FA, IN BREVE
        e, con LIKELIHOOD = True, anche per lo stimatore M -- gli STESSI eventi per tutti;
     3. per ogni algoritmo: taglio che accetta il 90% dei singoli, frazione di pile-up che
        sopravvive, BI = K x sopravvissuti, con la sua incertezza statistica;
-    4. scrive una riga per seed nel CSV del Monte Carlo di ogni cartella.
+    4. scrive una riga per seed nel CSV del Monte Carlo di ogni cartella (con DT_BINS anche il
+       rigetto per bin di ritardo, in DT_NAME).
   Il BI del programma di training e' ANALITICO (J x K). Questo e' quello SIMULATO: e' il numero da
   riportare (come fa il paper) e quello su cui si giudica ogni confronto fra algoritmi.
   NB: sigma_BI e' l'errore STATISTICO del Monte Carlo (scende alzando NSIM), non l'incertezza fisica.
@@ -45,6 +46,7 @@ MAPPA DELLE FUNZIONI (chi chiama chi)
           |     |     '-- full_spectrum()       spettro completo dalla meta' salvata
           |     |-- simulate_psd()              genera gli eventi e li passa per tutti
           |     '-- bi_from()                   taglio, BI e incertezza di un algoritmo
+          |-- write_dt_hist()                   rigetto per bin di ritardo (se DT_BINS)
           |-- append_row_to_csv()               scrive una riga (sicuro fra job paralleli)
           |     |-- read_rows()                 legge il CSV controllando lo schema
           |     '-- row_key()                   identita' di una riga (punto, gen, seed)
@@ -164,10 +166,28 @@ GEN_V2     = True           # True -> eventi da simulate_psd_v2: fotoni (detecto
 #     secondo impulso, come nel paper (misurato su ch91 WP15: non cambia media ne' precisione);
 #   - r su tutto [0, 1] della distribuzione 2beta, senza ripiegarlo in [0, 0.5].
 
+DT_BINS    = 20             # > 0: per ogni punto, seed e algoritmo salva anche il rigetto in funzione
+                            # del ritardo: pile-up e pile-up rigettati in DT_BINS bin uguali di
+                            # [0, dt_max], sugli STESSI eventi del BI (la somma sui bin ridà rp).
+                            # Una riga per seed in DT_NAME, accanto al CSV del Monte Carlo di ogni
+                            # cartella (e di M). Figure: plot_rejection_vs_dt_m205.py. 0 = niente.
+                            # Solo con GEN_V2 (il ritardo di ogni evento lo da' simulate_psd_v2).
+DT_EXTRA   = 0.5            # istogramma fino a (1 + DT_EXTRA) dt_max: si simulano a parte NSIM*DT_EXTRA
+                            # pile-up con ritardo in [dt_max, (1 + DT_EXTRA) dt_max] (stessa densita'
+                            # in dt, quindi stessa statistica per bin), che NON entrano nel BI.
+                            # Costo: +DT_EXTRA/2 sul tempo. DT_BINS*DT_EXTRA dev'essere intero. 0 = no.
+N_EXTRA    = round(DT_BINS * DT_EXTRA)
+if abs(N_EXTRA - DT_BINS * DT_EXTRA) > 1e-9:
+    raise SystemExit(f"[ERROR] DT_BINS * DT_EXTRA = {DT_BINS * DT_EXTRA} non e' intero: i bin oltre dt_max "
+                     f"non avrebbero la stessa larghezza")
+
 # Un seed solo -> il CSV di sempre; piu' seed -> un CSV a parte, col numero di seed nel nome.
 _V2 = "_v2" if GEN_V2 else ""
 OUT_NAME = (f"BI_mc_error_m205{_V2}.csv" if N_SEEDS == 1
             else f"BI_mc_error_m205{_V2}_seeds{N_SEEDS}.csv")
+DT_NAME = OUT_NAME.replace("BI_mc_error", "rejection_vs_dt")
+if DT_BINS and not GEN_V2:
+    raise SystemExit("[ERROR] DT_BINS richiede GEN_V2 = True (simulate_psd non da' il ritardo degli eventi)")
 
 # ── Esecuzione sul cluster PBS: un job per punto ────────────────────────────────────────────────
 SUBMIT_MODE       = "qsub"  # "qsub" = un job per punto ; "local" = in sequenza, qui (debug)
@@ -201,6 +221,10 @@ CSV_FIELDNAMES = ["channel", "wp", "vbias", "gen", "seed", "train", "nps", "filt
 # Il BI_results_*.csv della cartella di M, una riga per punto: le colonne che compare_templates
 # legge da ogni set. BI (analitico) = nan: M si giudica solo sul Monte Carlo.
 LIK_BI_FIELDNAMES = ["channel", "wp", "vbias", "signal_amp", "sigma_analytic", "SNR", "BI", "template"]
+# DT_NAME, una riga per punto, template di generazione, seed: n e n_rej sono interi separati da spazi
+# (pile-up e pile-up rigettati per bin di ritardo, bin uguali in [0, dt_hi]; dt_max = finestra del BI,
+# dt_hi = dt_max (1 + DT_EXTRA), in s).
+DT_FIELDNAMES = ["channel", "wp", "vbias", "gen", "seed", "filter", "dt_max", "dt_hi", "n", "n_rej"]
 ROW_KEY = ("channel", "wp", "gen", "seed")                   # identita' di una riga, vedi row_key
 
 
@@ -463,7 +487,7 @@ def simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), jitter_
 
 def simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), n_photons=None,
                     e_roi=fn.E_ROI_MEV, shift_max=1.0 / SAMPLING_RATE, jitter_max=20,
-                    nsim=NSIM, chunk=CHUNK, info_out=None, pre_baseline=True):
+                    nsim=NSIM, chunk=CHUNK, info_out=None, pre_baseline=True, dt_min=0.0):
     """Variante v2 di simulate_psd: stesso schema (blocchi di `chunk`, un generatore per tutta la
     simulazione, discriminante di ogni algoritmo sugli STESSI impulsi), con gli eventi della
     generazione v2 (sim.simulate_frequency_pulses_v2):
@@ -482,6 +506,8 @@ def simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), n_ph
     dt_max del pile-up (point_dt; non da quello dei singoli, che e' 0), uguale per le due popolazioni.
     info_out: se e' una lista, ci si appende il dict di ogni blocco (energia, tau, r, dt, ...
     evento per evento), per esempio per la sopravvivenza in funzione del ritardo.
+    dt_min: ritardi uniformi in [dt_min, dt_max] invece che in [0, dt_max] (i pile-up oltre la
+    finestra di DT_EXTRA); 0 = gli eventi di sempre.
     Usata da run_pair quando GEN_V2, e dal notebook tutorial."""
     rng, rng_x = np.random.default_rng(seed), np.random.default_rng([seed, 1])
     out = [[] for _ in range(len(filters) + len(stats))]
@@ -490,7 +516,8 @@ def simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats=(), n_ph
         fpulses, info = sim.simulate_frequency_pulses_v2(S, nps, w, n, rng, rng_x,
                                                          signal_scale=signal_amp, dt_max=dt_max,
                                                          n_photons=n_photons, e_roi=e_roi,
-                                                         q_value=fn.Q_BB_MEV, shift_max=shift_max)
+                                                         q_value=fn.Q_BB_MEV, shift_max=shift_max,
+                                                         dt_min=dt_min)
         if info_out is not None:
             info_out.append(info)
         pulses = np.fft.ifft(fpulses, axis=1).real.astype(np.float32)
@@ -540,16 +567,45 @@ def run_pair(channel, wp, rows, seed=SEED, likelihood=None):
     S, w, _ = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
     filters = [load_filters(f, channel, wp, nps, r) for f, r in zip(FOLDERS, rows)]
     stats = () if likelihood is None else (lambda p: -likelihood.statistic(p),)
+    info = []                       # ritardo di ogni pile-up (solo GEN_V2), per DT_BINS
     if GEN_V2:      # fotoni + energia nella ROI + shift sub-campione + baseline sul pretrigger
         kw = dict(n_photons=fn.n_photons(channel, cupid=CUPID), e_roi=fn.E_ROI_MEV,
                   shift_max=1.0 / SAMPLING_RATE, jitter_max=jitter)
         singles = simulate_psd_v2(S, nps, w, filters, signal_amp, 0.0, seed, stats, **kw)
-        pileups = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats, **kw)
+        pileups = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats,
+                                  info_out=info, **kw)
     else:
         singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats, jitter)
         pileups = simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats, jitter)
     out = [bi_from(s, p, K) for s, p in zip(singles, pileups)]
+    if DT_BINS:
+        dt = np.concatenate([d["dt"] for d in info])
+        disc = [o["psd_pileup"] for o in out]
+        nb, dt_hi = DT_BINS + N_EXTRA, dt_max * (1 + DT_EXTRA)
+        if N_EXTRA:     # pile-up OLTRE la finestra, in [dt_max, dt_hi]: stesso seed (stesso rumore,
+            # ampiezza, r: cambia solo il ritardo), stessa densita' in dt, stesso taglio dei singoli.
+            # Non entrano nel BI. Stessa finestra di ricerca del massimo (jitter) della campagna: e'
+            # l'algoritmo cosi' com'e', anche M (prior su [0, dt_max]).
+            info_x = []
+            extra = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_hi, seed, stats, info_out=info_x,
+                                    nsim=round(NSIM * DT_EXTRA), dt_min=dt_max, **kw)
+            dt = np.concatenate([dt] + [d["dt"] for d in info_x])
+            disc = [np.concatenate([a, b]) for a, b in zip(disc, extra)]
+        idx = np.clip(np.digitize(dt, np.linspace(0, dt_hi, nb + 1)) - 1, 0, nb - 1)
+        n = np.bincount(idx, minlength=nb)
+        for o, x in zip(out, disc):
+            o["dt_hist"] = (dt_max, dt_hi, n, np.bincount(idx, weights=x < o["cut"], minlength=nb).astype(int))
     return out if likelihood is None else (out[:-1], out[-1])
+
+
+def write_dt_hist(folder_dir, channel, wp, vbias, seed, filt, res):
+    """La riga di DT_NAME di un algoritmo (vedi DT_BINS), dal res di bi_from. Usata da run_worker."""
+    if not DT_BINS:
+        return
+    dt_max, dt_hi, n, k = res["dt_hist"]
+    append_row_to_csv(os.path.join(folder_dir, DT_NAME), dict(
+        channel=channel, wp=wp, vbias=vbias, gen=GEN_TEMPLATE, seed=seed, filter=filt, dt_max=dt_max,
+        dt_hi=dt_hi, n=" ".join(map(str, n)), n_rej=" ".join(map(str, k))), DT_FIELDNAMES)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -674,6 +730,7 @@ def run_worker(channel, wp):
                 train=tag, nps=FOLDERS[0]["nps"], filter="likelihood", BI_analytic="",
                 BI_mc=res_m["BI_mc"], sigma_BI=res_m["sigma_BI"], rp=res_m["rp"],
                 sigma_rp=res_m["sigma_rp"], nsim=NSIM, ratio=""))
+            write_dt_hist(d, channel, wp, rows[0]["vbias"], seed, "likelihood", res_m)
             bi_y = results[0]["BI_mc"]                    # RESULTS_NAME, sugli stessi eventi
             print(f"[OK] stimatore M ch {channel} wp {wp} seed {seed}: BI_mc={res_m['BI_mc']:.4e}"
                   f"  vs {FOLDERS[0]['name']} {bi_y:.4e}  ({100*(res_m['BI_mc']/bi_y-1):+.2f}%, "
@@ -685,6 +742,7 @@ def run_worker(channel, wp):
                 train=f["train"], nps=f["nps"], filter=f["filter"], BI_analytic=bi_an,
                 BI_mc=res["BI_mc"], sigma_BI=res["sigma_BI"], rp=res["rp"],
                 sigma_rp=res["sigma_rp"], nsim=NSIM, ratio=res["BI_mc"] / bi_an))
+            write_dt_hist(f["dir"], channel, wp, r["vbias"], seed, f["filter"], res)
             if i == 0 and (channel, wp) in PLOT:
                 plot_pair(f["dir"], channel, wp, res, bi_an)
             print(f"[OK] {f['name']} ch {channel} wp {wp} seed {seed}: BI_mc={res['BI_mc']:.4e} "
