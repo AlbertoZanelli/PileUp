@@ -44,12 +44,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # (injection)" del paper). Senza "@" si usa MC_GEN.
 #     "m205_results_wiener_root_npsclean"          -> MC_GEN
 #     "m205_results_wiener_root_npsclean@fit"      -> righe con gen='fit' dello stesso CSV
-SETS = ["m205_results_octopus_APsimfit10000led_npsclean",
-        "m205_results_wiener_APsimfit10000led_npsclean",
-        "m205_results_wiener_APsimfit10000led_npsclean_swna1"]
+SETS = ["m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise",
+        "m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise",
+        "m205_results_likelihood_APsimfit10000ledv2tf_npsclean_dtrise"]
 
-#SETS = ["m205_results_octopus_npsclean@fit",
-#        "m205_results_octopus_fit_npsclean@fit"]
+#SETS = ["archivio/campagna1/m205_results_octopus_npsclean@fit",
+#        "archivio/campagna1/m205_results_octopus_fit_npsclean@fit"]
 
 # Coppie per i pannelli di differenza (z e Delta BI).
 #   None                          -> ogni set contro il PRIMO della lista
@@ -87,7 +87,7 @@ ONLY_CHANNELS = [31, 34, 71, 83, 91]     # lista di canali da disegnare, es. [34
 MC_GEN = "fit"           # "root" | "fit"
 # File del Monte Carlo: quello a seed singolo, oppure quello a piu' seed scritto da
 # simulate_BI_error con N_SEEDS > 1 (serve per l'errore APPAIATO su Delta BI, vedi paired).
-MC_CSV = "BI_mc_error_m205_seeds50.csv"     # | "BI_mc_error_m205.csv" (un seed)
+MC_CSV = "BI_mc_error_m205_v2_seeds50.csv"     # | "BI_mc_error_m205_seeds50.csv" (v1) | "BI_mc_error_m205.csv" (un seed)
 BI_SOURCE = "both"       # "mc" | "analytic" | "both"
 # Barra d'errore del MC a piu' seed, per BI e Delta BI (e quindi per z):
 #   "width"  -> LARGHEZZA (P84 - P16)/2 della distribuzione sui seed: l'incertezza di UNA
@@ -132,10 +132,11 @@ def describe(spec):
     dal nome; quella di Octopus si vede, perche' e' l'eccezione."""
     folder, _, gen = spec.partition("@")
     gen = gen or MC_GEN
+    name = os.path.basename(folder)       # la cartella puo' stare in archivio/...
     for prefix, filt in (("m205_results_octopus", "OF"), ("m205_results_wiener", "W"),
                          ("m205_results_likelihood", "M")):
-        if folder.startswith(prefix):
-            tag = folder[len(prefix):]
+        if name.startswith(prefix):
+            tag = name[len(prefix):]
             break
     else:
         raise SystemExit(f"[ERROR] nome non riconosciuto: {folder}")
@@ -586,6 +587,10 @@ def plot_bi(data, channel, keys):
 
     zt = f"z = ({num} \u2212 BI_{ref}) / \u03c3"
     ylab(ax[1], [zt] if len(zt) <= 36 else [f"z = ({num} \u2212 BI_{ref})", "/ \u03c3"])
+    # spazio in alto per le note dei due pannelli: senza, il riquadro copre i punti vicino allo zero
+    for a in ax[1:]:
+        lo, hi = a.get_ylim()
+        a.set_ylim(lo, hi + 0.2 * (hi - lo))
     ax[1].text(0.012, 0.97, r"$\sigma = \sqrt{\sigma^2 + \sigma_{ref}^2}$, Monte Carlo "
                r"statistics only (shaded: 1$\sigma$, 2$\sigma$)",
                transform=ax[1].transAxes, fontsize=7.5, color="0.25", va="top",
@@ -669,6 +674,19 @@ SLIDE_RC = {
 }
 
 
+def short_label(tag):
+    """Etichetta da slide: solo il filtro, se basta a distinguere il set dagli altri."""
+    names = [LABELS[t].split(" - ")[0] for t in TAGS]
+    n = LABELS[tag].split(" - ")[0]
+    return n if names.count(n) == 1 else LABELS[tag]
+
+
+def short_pair_label(spec_ref, spec):
+    """pair_label con le etichette corte, quando la sorgente e' la stessa per i due set."""
+    (ta, sa), (tb, sb) = series(spec_ref), series(spec)
+    return f"{short_label(tb)} vs {short_label(ta)}" if ta != tb and sa == sb else pair_label(spec_ref, spec)
+
+
 def plot_bi_slide(data, channel, keys):
     """Figura di confronto pensata per una slide: grande, leggibile, un messaggio.
 
@@ -702,23 +720,28 @@ def plot_bi_slide(data, channel, keys):
             if not va:
                 continue
             if BI_SOURCE != "analytic" and vm:
-                ax.errorbar(vm, bm, yerr=em, fmt=marker(lab), ms=SLIDE_MS, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW,
+                # marker annidati, il primo set il piu' grande: dove i BI coincidono si vedono tutti
+                ms = SLIDE_MS + 2.5 * (len(keys) - 1 - keys.index(lab))
+                ax.errorbar(vm, bm, yerr=em, fmt=marker(lab), ms=ms, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW,
                             mfc=color(lab), mec="white", mew=1.2, ls="none",
-                            color=color(lab), label=LABELS[lab], zorder=3)
+                            color=color(lab), label=short_label(lab), zorder=3)
             elif BI_SOURCE != "analytic":
                 no_mc.append(lab)
             if BI_SOURCE != "mc":
                 ax.plot(va, ba, "-", lw=2.4, alpha=0.85, color=color(lab), zorder=2,
-                        label=LABELS[lab] if (BI_SOURCE == "analytic" or lab in no_mc) else None)
+                        label=short_label(lab) if (BI_SOURCE == "analytic" or lab in no_mc) else None)
 
         n_mc = sum(1 for lab in keys if any(
             bi_mc(rec) is not None for (c, _), rec in data[lab].items() if c == channel))
         gen, nsim = mc_info(data, keys, channel)
         ax.set_ylabel("BI  [counts / keV / kg / yr]")
         if BI_TARGET:
-            ax.axhline(BI_TARGET, color="tab:red", ls="--", lw=2.2, zorder=1,
+            ax.axhline(BI_TARGET, color="k", ls="--", lw=2.2, zorder=1,
                        label="CUPID pile-up target")
-        ax.set_title(f"Ch {channel} — background index vs bias voltage")
+            # axhline non allarga i limiti se il target e' gia' dentro: resterebbe sul bordo dell'asse
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(min(lo, BI_TARGET - 0.05 * (hi - lo)), hi)
+        ax.set_title(f"Ch {channel} — background index vs bias voltage", pad=78)
         # Notazione scientifica SEMPRE (scilimits=(0,0)), con il fattore comune in alto: su una
         # slide "0.8  x10^-4" si legge, "0.00008" no. L'offset ha un suo font, va ingrandito
         # a mano perche' non segue xtick/ytick.labelsize.
@@ -730,7 +753,8 @@ def plot_bi_slide(data, channel, keys):
             h += [Line2D([], [], color="0.4", marker="o", ls="none", mfc="0.4"),
                   Line2D([], [], color="0.4", ls="-")]
             l += ["Monte Carlo", "analytic"]
-        ax.legend(h, l, frameon=False, loc="best")
+        # sopra gli assi: dentro finisce sempre su qualche punto o sulla linea del target
+        ax.legend(h, l, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3, columnspacing=1.2)
 
         drawn_ref = None
         if axd is not None:
@@ -750,11 +774,16 @@ def plot_bi_slide(data, channel, keys):
                     col = DELTA_COLOR if len(pairs) == 1 else color(tb)
                     axd.errorbar(vv, dv, yerr=ev, marker=marker(tb), ms=SLIDE_MS, lw=2.4,
                                  mfc=col, mec="white", mew=1.2, color=col,
-                                 capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=pair_label(a, b))
+                                 capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=short_pair_label(a, b))
             axd.axhline(0, color="0.4", lw=1.4)
-            axd.set_ylabel("ΔBI  [%]")
+            # piu' coppie con lo stesso riferimento: i colori sono quelli dei set di sopra, basta l'asse
+            refs = {series(a)[0] for a, _ in pairs}
+            if len(pairs) > 1 and len(refs) == 1:
+                axd.set_ylabel(f"ΔBI [%]\nvs {short_label(refs.pop())}", fontsize=16)
+            else:
+                axd.set_ylabel("ΔBI  [%]")
+                axd.legend(frameon=False, loc="best")
             axd.set_xlabel("bias voltage  [V]")
-            axd.legend(frameon=False, loc="best")
             axd.margins(y=0.25)
         else:
             ax.set_xlabel("bias voltage  [V]")
@@ -923,13 +952,13 @@ def plot_validation(data, channel, keys):
     return out
 
 
-def plot_channels(data, keys, chans, what):
+def plot_channels(data, keys, chans, what, pair=None):
     """Figura d'INSIEME: una curva per CANALE, tutti e cinque sullo stesso asse.
 
     Due modalita', stessa forma (x = bias), quindi una funzione sola:
       what="BI"    -> il BI del set di riferimento (il PRIMO di SETS), sorgente COMPARE_ON.
                       E' il "risultato con il filtro ottimo sui 5 canali".
-      what="delta" -> il Delta BI [%] della PRIMA coppia di PAIRS, con le barre d'errore.
+      what="delta" -> il Delta BI [%] della coppia `pair` di PAIRS, con le barre d'errore.
                       E' il quadro d'insieme del guadagno, canale per canale.
     Restituisce None se non c'e' niente da disegnare."""
     with plt.rc_context(SLIDE_RC):
@@ -952,15 +981,15 @@ def plot_channels(data, keys, chans, what):
                                 mew=1.2, color=col, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=f"Ch {ch}")
             ax.set_ylabel("BI  [counts / keV / kg / yr]")
             if BI_TARGET:
-                ax.axhline(BI_TARGET, color="tab:red", ls="--", lw=2.2, zorder=1,
+                ax.axhline(BI_TARGET, color="k", ls="--", lw=2.2, zorder=1,
                            label="CUPID pile-up target")
             ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
             ax.yaxis.get_offset_text().set_fontsize(SLIDE_RC["ytick.labelsize"])
             src = "Monte Carlo" if COMPARE_ON == "mc" else "analytic"
-            ax.set_title(f"{LABELS[tag]}\nbackground index vs bias voltage — {src}")
+            ax.set_title(f"{short_label(tag)}: background index vs bias voltage — {src}")
             name = f"slide_BI-channels_{tag}"
         else:
-            spec_a, spec_b = PAIRS[0]
+            spec_a, spec_b = pair
             ta, tb = series(spec_a)[0], series(spec_b)[0]
             if ta not in keys or tb not in keys:
                 plt.close(fig); return None
@@ -980,9 +1009,9 @@ def plot_channels(data, keys, chans, what):
                                 mew=1.2, color=col, capsize=SLIDE_CAP, elinewidth=SLIDE_ELW, label=f"Ch {ch}")
             ax.axhline(0, color="0.4", lw=1.4)
             ax.set_ylabel("ΔBI  [%]")
-            ax.set_title(f"{pair_label(spec_a, spec_b)}\nrelative change of the background "
+            ax.set_title(f"{short_pair_label(spec_a, spec_b)}\nrelative change of the background "
                          f"index — negative = better")
-            name = "slide_dBI-channels"
+            name = f"slide_dBI-channels_{tb}"
         if not drawn:
             plt.close(fig); return None
         ax.set_xlabel("bias voltage  [V]")
@@ -1089,8 +1118,8 @@ def main():
             if out:
                 print(f"   -> {os.path.relpath(out, BASE_DIR)}")
     if SLIDE:
-        for what in ("BI", "delta"):
-            out = plot_channels(data, keys, chans, what)
+        for what, pair in [("BI", None)] + [("delta", p) for p in PAIRS]:
+            out = plot_channels(data, keys, chans, what, pair)
             if out:
                 print(f"   -> {os.path.relpath(out, BASE_DIR)}")
     summary_table(data, keys)

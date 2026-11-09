@@ -1,2 +1,20 @@
 Processed/
 *.root
+
+# generati in automatico
+__pycache__/
+*.pyc
+.DS_Store
+
+# script e log dei job sul cluster
+jobs/
+logs/
+logs_mc/
+
+# file ausiliari di LaTeX
+*.aux
+*.fls
+*.fdb_latexmk
+*.out
+*.synctex.gz
+tesi_note/*.log

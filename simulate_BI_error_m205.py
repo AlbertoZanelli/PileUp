@@ -218,8 +218,10 @@ def _parse_results_name(name):
     """Dal nome della cartella: (tipo di filtro, template di training, AP simulato, sorgente NPS).
         m205_results_octopus_...  -> "optimum"      m205_results_wiener_..._R -> "wiener_R"
         m205_results_wiener_...   -> "wiener"
+    Conta solo il nome finale: la cartella puo' stare in una sottocartella (archivio/...).
     Il suffisso della penalita' su s (_swna<w>, _sbar<s>) agisce solo nel training e non cambia
     niente qui: si toglie. Usata da folder_info."""
+    name = os.path.basename(name)
     if name.startswith("m205_results_octopus"):
         base, tag = "optimum", name[len("m205_results_octopus"):]
     elif name.startswith("m205_results_wiener"):

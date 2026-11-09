@@ -21,11 +21,11 @@ BASE = "/Users/albertozanelli/Desktop/Tesi_Erasmus/PileUp"; sys.path.insert(0, B
 import src.analysis as an, utility.functions as fn
 from scipy.stats import norm
 from utility.double_beta_spectrum import pdf_ratio2b
-OFD = f"{BASE}/m205_results_octopus_APsimfit10000led_npsclean/trained_filters"
-WD  = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1/trained_filters"
+OFD = f"{BASE}/archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean/trained_filters"
+WD  = f"{BASE}/archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1/trained_filters"
 full = lambda h: np.concatenate([h, np.conj(h[-2:0:-1]) if np.iscomplexobj(h) else h[-2:0:-1]])
 amp = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"]) for r in
-       csv.DictReader(open(f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1/BI_results_m205_wiener_APsimfit10000led_npsclean_swna1.csv"))}
+       csv.DictReader(open(f"{BASE}/archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1/BI_results_m205_wiener_APsimfit10000led_npsclean_swna1.csv"))}
 N = 100
 r = np.linspace(0, .5, N); rd = pdf_ratio2b(r); rd /= rd.mean()
 T = lambda a: torch.tensor(np.asarray(a), dtype=torch.cfloat)

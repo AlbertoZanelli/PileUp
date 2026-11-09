@@ -42,10 +42,10 @@ VBIAS = np.array([0.6, 1.0, 1.4, 1.8, 2, 3, 4, 5, 6, 8, 10, 20, 26, 30, 40])
 WPS = list(range(1, 30, 2))
 FS, WIN = 10_000, 10_000
 
-OF_SET = "m205_results_octopus_npsclean"                    # riferimento, gen=root
+OF_SET = "archivio/campagna1/m205_results_octopus_npsclean"                    # riferimento, gen=root
 # Le figure 4, 5, 9, 10 sono illustrative: servono i filtri addestrati, e in OF_SET manca ch34.
 # Si usa la campagna OF che li ha per tutti i canali (template APsimfit10000led).
-FILT_SET = "m205_results_octopus_APsimfit10000led_npsclean"
+FILT_SET = "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean"
 WF_RAW = "m205_results_wiener_root_npsclean"                # Wiener senza penalita'
 WF_REG = "m205_results_wiener_root_npsclean_swna1"          # Wiener con penalita'
 GEN = "root"

@@ -29,8 +29,8 @@ import plot_thesis_loadcurve_m205 as st     # thesis style (rcParams), channels,
 import compare_templates_m205 as ct         # campaign CSVs, common seeds, width
 
 OUTDIR = os.path.join(st.BASE, "thesis_figures", "hallucination")
-SETS = {"root": "m205_results_octopus_npsclean",        # trained on the Octopus AP
-        "fit":  "m205_results_octopus_fit_npsclean"}    # trained on the fit
+SETS = {"root": "archivio/campagna1/m205_results_octopus_npsclean",        # trained on the Octopus AP
+        "fit":  "archivio/campagna1/m205_results_octopus_fit_npsclean"}    # trained on the fit
 LABEL = {"root": "Octopus AP", "fit": "fit"}
 COLOR = {"root": "#2a78d6", "fit": "#eb6834"}
 MARK = {"root": "o", "fit": "s"}

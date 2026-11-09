@@ -41,7 +41,7 @@ from src.pileup_likelihood import PileupLikelihood
 
 CH, WP = int(sys.argv[1]), int(sys.argv[2])
 NSIM = int(sys.argv[3]) if len(sys.argv) > 3 else 30000
-WD = f"{BASE}/m205_results_wiener_APsimfit10000led_npsclean_swna1"      # filtri di Y
+WD = f"{BASE}/archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1"      # filtri di Y
 A = {(int(r["channel"]), int(r["wp"])): float(r["signal_amp"])
      for r in csv.DictReader(open(glob.glob(f"{WD}/BI_results_*.csv")[0]))}[(CH, WP)]
 full = lambda h: np.concatenate([h, np.conj(h[-2:0:-1]) if np.iscomplexobj(h) else h[-2:0:-1]])

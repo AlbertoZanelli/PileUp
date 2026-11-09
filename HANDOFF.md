@@ -15,6 +15,85 @@ PRECISELY, with sources, and every claim checked on the Monte Carlo, never on th
 
 ---
 
+## ★★★★★★ 2026-11-01 — PER LA CHAT DELLE SLIDE: QUALI DATI USARE
+
+**Goal.** Preparare le slide sui risultati pile-up di m205 dopo le correzioni alla tesi. Questa sezione basta per
+sapere quali dati e figure usare; il resto del file serve solo per i dettagli. Discussione in italiano, testo delle
+figure in inglese. Commit solo se l'utente lo chiede, mai con `Co-Authored-By: Claude`.
+
+**Campagna da usare: v2, `APsimfit10000ledv2tf`, `_dtrise`.** 5 canali (31, 34, 71, 83, 91) × 15 bias (0.6-40 V) = 75
+punti; 50 seed × 50 000 eventi per popolazione; stessi eventi per i tre algoritmi; taglio al 90% dei singoli.
+Monte Carlo completo, nessun errore nei log (commit `bf18b333`).
+
+| algoritmo | nome in figura | cartella |
+|---|---|---|
+| filtro ottimo, riferimento | optimum filter (OF) | `m205_results_octopus_APsimfit10000ledv2tf_npsclean_dtrise` |
+| Wiener con penalità su s | Wiener + s-penalty (Wwna) | `m205_results_wiener_APsimfit10000ledv2tf_npsclean_swna1_dtrise` |
+| rapporto di verosimiglianza | likelihood ratio M (OPURA) | `m205_results_likelihood_APsimfit10000ledv2tf_npsclean_dtrise` |
+
+- **Dati:** in ogni cartella, `BI_mc_error_m205_v2_seeds50.csv`, una riga per punto e seed (`BI_mc`, `rp` = frazione di
+  pile-up rigettata, `BI_analytic`). Il valore del punto è la mediana sui seed. Il BI analitico, K e R analitica stanno
+  in `BI_results_*.csv` (BI = K(1 − R)); M non ha BI analitico.
+- **Non usare per i risultati:** cartelle `..._APsimfit10000led_...` (tesi) e `..._ledv2_...` (fit vecchi, sbagliati in
+  7 punti), né i CSV `BI_mc_error_m205_seeds50.csv`.
+
+**Figure pronte per le slide**, in
+`comparisons/OF-APsimfit10000ledv2tf-dtrise_vs_Wwna-APsimfit10000ledv2tf-dtrise_vs_M-APsimfit10000ledv2tf-dtrise/`:
+- `slide_BI-channels_OF-APsimfit10000ledv2tf-dtrise.png`: BI Monte Carlo di OF sui 5 canali, col target. Figura principale.
+- `slide_dBI-channels_M-APsimfit10000ledv2tf-dtrise.png`: ΔBI di M rispetto a OF.
+- `slide_dBI-channels_Wwna-APsimfit10000ledv2tf-dtrise.png`: ΔBI di Wiener rispetto a OF.
+- `slide_BI-mc+analytic_ch{31,34,71,83,91}_inj-fit.png`: per canale, Monte Carlo, analitico e ΔBI.
+- `BI-mc+analytic_ch*_inj-fit.png` e `filter-f{1,2}_ch*.png` sono da documento, non da slide (i filtri non sono stati
+  ricontrollati a vista).
+- Altre: `comparisons/K_rejection_APsimfit10000ledv2tf-dtrise.png` (K, BI, R, rise time, **solo analitici**) e
+  `comparisons/BI_vs_V_APsimfit10000ledv2tf-dtrise.png` (fit nuovi contro vecchi, **solo analitici**).
+- Rigenerare: `SLIDE = True` in cima a `compare_templates_m205.py` (default `False`), poi lanciarlo con
+  `KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 /opt/homebrew/bin/python3.13 compare_templates_m205.py`.
+
+**Numeri Monte Carlo** (mediana sui seed, BI in counts/(keV kg yr); il migliore è sempre a 40 V):
+
+| canale | OF 0.6 V | M 0.6 V | OF 40 V ± larghezza | M 40 V | rigetto OF 0.6 → 40 V | K 0.6 → 40 V | M vs OF, mediana (massimo) |
+|---|---|---|---|---|---|---|---|
+| 31 | 1.318e-4 | 1.263e-4 | 5.09e-5 ± 0.02e-5 | 5.09e-5 | 77.7 → 47.1% | 5.91e-4 → 0.96e-4 | −0.77% (−4.06%) |
+| 34 | 2.580e-4 | 2.225e-4 | 6.25e-5 ± 0.04e-5 | 6.25e-5 | 67.2 → 63.5% | 7.87e-4 → 1.71e-4 | −0.02% (−13.79%) |
+| 71 | 1.507e-4 | 1.430e-4 | 4.15e-5 ± 0.03e-5 | 4.15e-5 | 79.9 → 60.8% | 7.51e-4 → 1.06e-4 | −0.17% (−5.18%) |
+| 83 | 1.716e-4 | 1.640e-4 | 5.45e-5 ± 0.03e-5 | 5.44e-5 | 74.1 → 57.8% | 6.63e-4 → 1.29e-4 | −0.35% (−4.38%) |
+| 91 | 1.800e-4 | 1.718e-4 | 1.199e-4 ± 0.003e-4 | 1.175e-4 | 60.2 → 17.1% | 4.52e-4 → 1.45e-4 | −2.19% (−4.80%) |
+
+**Messaggi supportati dai dati**
+1. **Target 5e-5:** nel Monte Carlo solo 4 punti su 75 sono sotto, ch71 a 20, 26, 30, 40 V (4.70, 4.48, 4.37, 4.15e-5).
+   L'analitico ne dà 8: anche ch31 alle stesse tensioni, che nel Monte Carlo sta sopra (5.09-5.16e-5 da 26 a 40 V, circa
+   5.3e-5 a 20 V). Vicino al target, ma sopra. M non aggiunge punti.
+2. **Il BI scende col bias grazie a K**, non al rigetto: K segue il rise time, che si accorcia, mentre il rigetto cala.
+   Ch91 è il caso estremo: il rigetto crolla al 17% e il BI resta sopra 1.17e-4 a tutti i bias.
+3. **M è il migliore a basso bias:** −4/−5% a 0.6 V, −13.8% su ch34. Sopra circa 10 V il vantaggio sparisce, tranne ch91
+   (circa −2%). Dove M perde, il massimo è +0.19% (ch34, 8 V).
+4. **Wiener con penalità non guadagna rispetto a OF:** mediane per canale fra −0.09% e +0.34%, massimo circa +1% (ch91).
+5. **L'analitico è ottimista:** BI_mc/analitico mediana 1.024 per OF (0.984-1.129) e 1.032 per Wiener (0.987-1.135),
+   massimo su ch71 a 40 V e ch91 a 30 V. Non usarlo per le differenze fra filtri: su ch91 a 30 V dà Wiener +3%, il
+   Monte Carlo −0.2%.
+
+**Cautele da riportare**
+- **Non è CUPID:** sono rivelatori m205 alle loro tensioni, il riscalamento a CUPID non è fatto. Il confronto col target
+  è indicativo.
+- **Non confrontabile direttamente con la tesi:** lì Δt_max = 0.8 ms fisso, qui Δt_max = rise time di ogni punto (da 0.29
+  a 2.37 ms). Cambiano anche generazione degli eventi (fotoni, energia nella ROI, shift sub-campione) e template.
+- **Barre d'errore:** sono la larghezza (P84 − P16)/2 sui seed, cioè l'incertezza di una simulazione, circa 0.65% del BI
+  (0.2-1.0%). Non sono l'errore sulla mediana (circa 0.18 × la larghezza con 50 seed) e sono solo statistiche, senza
+  sistematiche di template.
+- **Rigetto:** usare `rp` del Monte Carlo. La R analitica è diversa (ch91 a 40 V: 24% contro 17%).
+- **Causa dello scarto MC/analitico:** non indagata. Non presentare una spiegazione come accertata.
+- Il bias è in scala logaritmica nelle figure da slide, lineare in quelle da documento.
+
+**What worked.** Modalità `SLIDE` di `compare_templates_m205.py`, con etichette corte, legenda sopra gli assi e marker
+annidati (OF resta in gran parte nascosto dietro Wiener perché i valori coincidono).
+**What didn't.** Legende dentro gli assi e nomi lunghi dei set: coprivano i punti e il target.
+
+**Next steps.** Scegliere le figure in base al taglio della presentazione, chiedendo a Alberto durata e pubblico.
+Nulla di questa sezione, di `compare_templates_m205.py` e delle figure è ancora committato.
+
+---
+
 ## ★★★★★ 2026-10-29 — FIXING THE THESIS ERRORS, CAMPAIGN v2 (START HERE)
 
 **Goal.** Correct the known errors of the thesis pile-up analysis and redo the m205 campaign ("v2"):
@@ -25,8 +104,8 @@ regenerate templates → retrain → MC. Rules unchanged: Italian discussion, En
 commits/syncs unless he says "sincronizza" (then commit + push, **never a Co-Authored-By line**), no
 training on the Mac, ask before deleting/moving.
 
-### State right now (2026-10-31)
-- **Fits done, templates done, trainings ready to launch on the cluster.** Fits: `fits_octopus_tf`, 1125 npz, all 5
+### State right now (2026-11-01)
+- **Fits, templates, trainings and MC done** (results: section above, details: Next steps below). Fits: `fits_octopus_tf`, 1125 npz, all 5
   channels; ch34 rerun apart (`CHANNELS = [34]`, `RESET = False`). Its `bestfit`/canvases were rewritten locally from the npz.
 - β fit/AP (`test/fit/check_beta_fit_tf_m205.py`, `comparisons/beta_fit_tf_vs_AP_m205.{png,csv}`): median 0.982, range
   0.847-0.995 (old fits up to 1.624). With the AP's noise added to the fit (synthetic AP), AP/fit median 1.010, range
@@ -91,11 +170,12 @@ training on the Mac, ask before deleting/moving.
 ### Next steps
 1. Trainings OF and Wwna are DONE (`..._APsimfit10000ledv2tf_npsclean[_swna1]_dtrise`, 75 points each). Figures:
    `plot_BI_vs_V_m205.py`, `plot_K_rejection_m205.py`. W without penalty (`S_PENALTY = None`) not run.
-2. MC is configured (`simulate_BI_error_m205.py`: Wwna + OF on the same events, `GEN_V2 = True`, `T_MAX = "rise"`,
-   `N_SEEDS = 50`, `NSIM = 50 000`, no M). On the cluster, in `screen`: `python simulate_BI_error_m205.py`; progress with
-   `python check_mc_progress_m205.py`. Measured on the Mac: 175 s per seed, ~2.4 h per point, 0.73 GB (`RAM_GB = 2`).
+2. MC is DONE (`simulate_BI_error_m205.py`: Wwna + OF + M on the same events, `GEN_V2 = True`, `T_MAX = "rise"`,
+   50 seeds x 50 000 events x 75 points, no errors in the logs). Figures: `compare_templates_m205.py`, in
+   `comparisons/OF-..._vs_Wwna-..._vs_M-...ledv2tf-dtrise/`. Median BI_mc/analytic: OF 1.024 (0.984-1.129), Wwna 1.032;
+   below the 5e-5 target in the MC: only ch71 at 20-40 V (4/75; the analytic model says 8). M beats OF mostly at low bias.
    Note: `NSIM` is bound at definition, so overriding `m.NSIM` in a test does NOT reduce the events.
-3. Then compare with `compare_templates_m205.py` (`SETS` = the new folders, `MC_CSV = "BI_mc_error_m205_v2_seeds50.csv"`).
+3. `test/likelihood/check_likelihood_in_mc_m205.py` is stale (old folders, `make_likelihood` without `dt_max`).
 4. Later: CUPID rescaling (choose G_ch, SNR gain at 120 V), check that LMO scintillation pulses have the same
    shape as LED pulses (m204 coincidences at 2615 keV), README + clean the stale paths in this file.
 

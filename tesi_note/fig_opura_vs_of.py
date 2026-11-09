@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.dirname(HERE)
-OF = "m205_results_octopus_APsimfit10000led_npsclean"
-OPURA = "m205_results_likelihood_APsimfit10000led_npsclean"
+OF = "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean"
+OPURA = "archivio/campagna1/m205_results_likelihood_APsimfit10000led_npsclean"
 MC_CSV, GEN, N_SEEDS = "BI_mc_error_m205_seeds50.csv", "fit", 50
 COLORS = {31: "#2a78d6", 34: "#eb6834", 71: "#1baf7a", 83: "#eda100", 91: "#e87ba4"}
 
@@ -38,7 +38,7 @@ def load(folder):
 def main():
     of, op = load(OF), load(OPURA)
     train = {(int(r["channel"]), int(r["wp"])): r
-             for r in csv.DictReader(open(os.path.join(BASE, OF, f"BI_results_m205_{OF[len('m205_results_octopus_'):]}.csv")))}
+             for r in csv.DictReader(open(os.path.join(BASE, OF, f"BI_results_m205_{os.path.basename(OF)[len('m205_results_octopus_'):]}.csv")))}
     rows = []
     for p in sorted(of):
         seeds = sorted(of[p].keys() & op[p].keys())

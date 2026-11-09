@@ -43,10 +43,10 @@ import src.analysis as an
 import src.dataset as ds
 
 OUTDIR = os.path.join(st.BASE, "thesis_figures", "wiener")
-FOLD = {"OF": "m205_results_octopus_APsimfit10000led_npsclean",
-        "W": "m205_results_wiener_APsimfit10000led_npsclean",              # no penalty
-        "Wwna": "m205_results_wiener_APsimfit10000led_npsclean_swna1"}     # penalty w = 1
-HIST_DIR = os.path.join(st.BASE, "m205_results_wiener_APsimfit10000led_npsclean_swna1_hist")
+FOLD = {"OF": "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean",
+        "W": "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean",              # no penalty
+        "Wwna": "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1"}     # penalty w = 1
+HIST_DIR = os.path.join(st.BASE, "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1_hist")
 KERNEL_PT = (34, 3)                     # figs 1 and 3
 LAMS = [1.0, 1e-4]
 EVENT = dict(r=0.5, dt=0.8e-3, seed=3)  # fig. 3: example event

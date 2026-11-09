@@ -52,7 +52,7 @@ def style(a):
 
 
 def overview():
-    bi_ap, bi_fit = thesis_bi("m205_results_octopus_npsclean"), thesis_bi("m205_results_octopus_fit_npsclean")
+    bi_ap, bi_fit = thesis_bi("archivio/campagna1/m205_results_octopus_npsclean"), thesis_bi("archivio/campagna1/m205_results_octopus_fit_npsclean")
     fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
     for ch, c, m in zip(CHANNELS, COLORS, MARKERS):
         ratio = []

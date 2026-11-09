@@ -38,9 +38,9 @@ R, DT = 0.5, 0.5e-3           # il pile-up d'esempio: frazione d'energia del sec
 SEED = 3                      # rumore dell'evento
 T_RANGE = (-10.0, 40.0)       # finestra di tempo disegnata [ms]
 ALGOS = [                     # (etichetta, cartella dei filtri)
-    ("optimum filter", "m205_results_octopus_APsimfit10000led_npsclean"),
-    ("Wiener, no penalty", "m205_results_wiener_APsimfit10000led_npsclean"),
-    ("Wiener + penalty", "m205_results_wiener_APsimfit10000led_npsclean_swna1"),
+    ("optimum filter", "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean"),
+    ("Wiener, no penalty", "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean"),
+    ("Wiener + penalty", "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1"),
 ]
 C_RAW, C_F1, C_F2 = "0.55", "#2a78d6", "#eb6834"
 if len(sys.argv) > 2:                                   # da riga di comando: canale WP [r dt_ms]

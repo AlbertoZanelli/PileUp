@@ -53,7 +53,7 @@ def rows(d):
 def mc(d):
     return {(int(r["channel"]), int(r["wp"])): float(r["BI_mc"]) for r in csv.DictReader(open(f"{BASE}/{d}/BI_mc_error_m205.csv"))
             if r["gen"] == "fit" and r["seed"] == "1234"}
-W_ = "m205_results_wiener_APsimfit10000led_npsclean_swna1"; O_ = "m205_results_octopus_APsimfit10000led_npsclean"
+W_ = "archivio/campagna1/m205_results_wiener_APsimfit10000led_npsclean_swna1"; O_ = "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean"
 amp, mcW, mcO = rows(W_), mc(W_), mc(O_)
 
 def point(ch, wp, scale=1.0):

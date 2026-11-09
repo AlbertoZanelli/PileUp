@@ -40,7 +40,7 @@ WPS      = range(1, 30, 2)
 VBIAS    = [0.6, 1.0, 1.4, 1.8, 2, 3, 4, 5, 6, 8, 10, 20, 26, 30, 40]   # indexed by WP // 2
 FS       = 10_000.0                                                    # Hz
 NPS_FILE = os.path.join(BASE, "m205_NPS_clean", "ch{ch}", "nps_ch{ch}_wp{wp}.npy")
-BI_CSV   = os.path.join(BASE, "m205_results_octopus_APsimfit10000led_npsclean",
+BI_CSV   = os.path.join(BASE, "archivio/campagna1/m205_results_octopus_APsimfit10000led_npsclean",
                         "BI_results_m205_APsimfit10000led_npsclean.csv")
 AMP_CSV  = os.path.join(BASE, "amplitudes_m205.csv")
 LC_TXT   = os.path.join(BASE, "m205_load_curves", "load_curve_data_m205.txt")

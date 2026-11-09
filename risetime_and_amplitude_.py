@@ -56,7 +56,7 @@ LOAD_CURVE_RESULTS_DIR    = "m205_results_octopus"                 # folder to s
 AMP_CSV_NAME       = "amplitudes_m205.csv"            # output CSV (amplitudes)
 
 #   AVERAGE_PULSES_BIN — reads average-pulse .bin files
-BIN_DIR     = "AnalisiArgonauts_m205"                              # folder containing the .bin files
+BIN_DIR     = "archivio/argonauts/AnalisiArgonauts_m205"                              # folder containing the .bin files
 BIN_PATTERN = "000205_20260405T115934_*_000.bin_edmean.bin"      # glob pattern of the files to read
 RT_CSV_NAME = "risetime_m205_argonauts.csv"                        # output CSV (risetimes)
 # Regex (with ONE capture group = channel number) to pull the channel from the
@@ -67,7 +67,7 @@ BIN_CH_REGEX = r"_(\d+)_000\.bin_edmean\.bin$"
 # ── AVERAGE_PULSES_ROOT settings ─────────────────────────────────────────────────
 #   Single-run Octopus ROOT files (one per channel). Unlike the .bin files these
 #   carry a real time axis (hist.axis().centers()), so no sampling period is needed.
-AP_ROOT_DIR      = "m204/Processed/m204_AP"                 # folder with the .root files
+AP_ROOT_DIR      = "archivio/m204/Processed/m204_AP"                 # folder with the .root files
 AP_ROOT_PATTERN  = "Processed_*_000204_*_new.root"     # glob pattern of the files to read
 AP_ROOT_HIST     = "averagepulse_ap_medianAP"          # histogram name inside each file
 AP_ROOT_CSV_NAME = "risetime_m204_octopus.csv"         # output CSV (risetimes)
@@ -76,7 +76,7 @@ AP_ROOT_CSV_NAME = "risetime_m204_octopus.csv"         # output CSV (risetimes)
 #   Like AVERAGE_PULSES_BIN, but the filename carries BOTH the channel and the WP,
 #   e.g. 'm205_ch31_combined_WP19.bin_edmean.bin' -> channel 31, wp 19. m205 is
 #   sampled at 10 kHz (window 10000 -> 1 s, dt = 0.1 ms).
-BINWP_DIR     = "AnalisiArgonauts_m205"                        # folder with the .bin files
+BINWP_DIR     = "archivio/argonauts/AnalisiArgonauts_m205"                        # folder with the .bin files
 BINWP_PATTERN = "m205_ch*_combined_WP*.bin_edmean.bin"         # glob pattern of the files
 BINWP_CSV_NAME = "risetime_m205_argonauts_wp.csv"             # output CSV (risetimes)
 # Regex with TWO capture groups = (channel, wp).
