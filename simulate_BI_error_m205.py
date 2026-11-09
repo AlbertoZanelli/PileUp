@@ -143,7 +143,7 @@ CHUNK   = 500               # eventi generati per volta: tutti insieme finirebbe
                             # CAMBIA GLI EVENTI (vedi simulate_psd): uguale in tutte le campagne
                             # che si confrontano.
 SEED    = 1234
-N_SEEDS = 50                 # ripetizioni INDIPENDENTI: il seed SEED + i genera una simulazione
+N_SEEDS = 1                 # ripetizioni INDIPENDENTI: il seed SEED + i genera una simulazione
                             # completa, una riga per seed. Cartelle simulate con gli stessi seed
                             # vedono gli STESSI eventi: il Delta BI seed per seed contiene la
                             # covarianza e la sua dispersione e' l'errore (compare_templates).
