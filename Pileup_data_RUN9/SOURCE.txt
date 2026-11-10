@@ -1,0 +1,15 @@
+Copied from Pageot's repository: https://baltig.infn.it/cupid/Pileup_Analysis.git
+branch update-from-MIT, commit 0753751 (2026-09-30). Paper: arXiv:2606.17948.
+Data: CROSS RUN9 @ LSC, measurement 000813_20230628T161508, fs = 10 kHz, window 4096.
+channel -> channel_ID: 3->5 5->9 9->11 11->10 13->4 15->2 17->12 19->3
+
+AP/average_pulse_channel{ch}.npy    pulse injected in the noise (peak = 1)   <- outputs/meanpulses_build/pos_pulses_rawdata/
+AP/channel{ch}_meanpulse_mean.npy   mean pulse used to train the filters    <- outputs/meanpulses_build/
+NPS/NPS_channel{ch}_win4096_*.npy   two-sided NPS; the tutorial multiplies it by 8/3 (Hann window)  <- outputs/NPS_study/
+BI_*.csv                            Pageot's BI results                      <- outputs/
+
+Only on the server (DATA_PATH=/data2/LSC/DATA/RUN9 on cupid-login), not copied here:
+  000813_20230628T161508_{ch:03}_000.bin   noise stream where the pulses are injected
+The .pos files (pup_n1-d0 singles, pup_n1-d8 pile-ups, 16000 each, dt 0-0.8 ms, r 0.07-0.5)
+are in this folder. They already give the amplitude at Qbb (the A/E column ratio x 3.034 MeV),
+so the .injconf files Pageot uses in get_amp_Q_val are not needed.
