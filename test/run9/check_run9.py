@@ -29,6 +29,7 @@ words = np.full(starts.max() + A.WINDOW + 8, (2 ** 23) << 8, dtype=np.uint32)   
 rng = np.random.default_rng(1)
 for s in starts:          # la lettura salta la prima parola del file: la finestra s parte dalla parola s+1
     v = np.fft.ifft(np.sqrt(nps) * (rng.normal(size=A.WINDOW) + 1j * rng.normal(size=A.WINDOW))).real
+    v += rng.uniform(-1, 1) + np.linspace(0, rng.uniform(-1e-3, 1e-3), A.WINDOW)   # baseline e deriva, come nei dati veri
     words[s + 1:s + 1 + A.WINDOW] = np.round((v + ADC) / ADC * 2 ** 23).astype(np.uint32) << 8
 words[:3] = np.frombuffer(struct.pack("<c3xff", b"<", 10000.0, ADC), dtype=np.uint32)
 

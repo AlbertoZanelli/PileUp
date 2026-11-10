@@ -87,9 +87,13 @@ def run_channel(ch, bin_dir, n, out_dir):
     nps_ratio = float(np.median(meas[band] / nps[band]))
     del noise
 
-    # M: alto = pile-up; il taglio accetta ACCEPTANCE dei singoli
+    # M: alto = pile-up; il taglio accetta ACCEPTANCE dei singoli. Gli impulsi si preparano come per Y
+    # (get_PSD_interpole_torch): via la baseline media del pre-trigger, poi Hann (S e' gia' finestrato).
+    # Senza, l'offset in DC del .bin vero domina y(t) e M ~ 1e5 per tutti gli eventi.
+    pre = WINDOW // 2 - 100
+    prep = lambda x: (x - x[:, :pre].mean(axis=1, keepdims=True)) * han
     lik = PileupLikelihood(S, nps, w, dt_max=DT_MAX, t_window=T_WINDOW)
-    M = {k: np.concatenate([lik.statistic(d.data[i:i + BATCH].numpy()) for i in range(0, len(d), BATCH)])
+    M = {k: np.concatenate([lik.statistic(prep(d.data[i:i + BATCH].numpy())) for i in range(0, len(d), BATCH)])
          for k, d in data.items()}
     cut = np.percentile(M["single"], ACCEPTANCE * 100)
     rp_M = float(np.mean(M["pileup"] > cut))
