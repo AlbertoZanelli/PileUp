@@ -85,6 +85,7 @@ class PileupLikelihood:
         self.R0 = R(0.0)
 
         # ── 4. i pile-up su cui si media: ritardi (in passi di griglia) e ripartizioni ────────
+        self.step = step
         self.d_steps = np.arange(0, int(round(dt_max / step)) + 1)
         self.r = np.asarray(r_values, dtype=float)
         # ||P||^2 per ogni (dt, r)  (eq. 13): norma del template di pile-up
@@ -101,8 +102,11 @@ class PileupLikelihood:
         Z = X[:, self.k] * self.filt[None, :]
         return X[:, [0]].real * self.dc + 2 * (Z.real @ self.cos - Z.imag @ self.sin)
 
-    def statistic(self, pulses):
-        """M per ogni evento (eq. 20). pulses: (n_eventi, n_campioni), nel dominio del tempo."""
+    def statistic(self, pulses, best=False):
+        """M per ogni evento (eq. 20). pulses: (n_eventi, n_campioni), nel dominio del tempo.
+        best=True: restituisce (M, dt, r), con (dt, r) del termine piu' grande della somma, cioe' il
+        pile-up piu' probabile a posteriori (a dt uniforme coincide col massimo di L in dt; r e'
+        pesato con pdf_ratio2b). Risoluzione: il passo della griglia (step) e quello di r_values."""
         y = self.correlation(pulses)
         y1 = y[:, :self.n_t1]                                     # y al tempo del primo impulso
         # un impulso: chi^2 spiegato, ampiezza >= 0  (eq. 9). Il massimo si prende PRIMA di clip e
@@ -120,7 +124,12 @@ class PileupLikelihood:
             L = np.clip(c.max(axis=2), 0, None) ** 2 / self.normP[j][None, :]   # (eq. 14)
             terms.append(self.log_prior[None, :] + 0.5 * (L - L1[:, None]))
         # somma pesata degli exp in forma logaritmica: L - L1 arriva a centinaia (eq. 20)
-        return logsumexp(np.concatenate(terms, axis=1), axis=1)
+        terms = np.concatenate(terms, axis=1)                     # colonna = j * len(r) + indice di r
+        M = logsumexp(terms, axis=1)
+        if not best:
+            return M
+        j, i = np.divmod(terms.argmax(axis=1), len(self.r))
+        return M, self.d_steps[j] * self.step, self.r[i]
 
 
 if __name__ == "__main__":
@@ -152,5 +161,8 @@ if __name__ == "__main__":
     dt, r = 3e-4, 0.5
     pile = np.fft.ifft(S * ((1 - r) + r * np.exp(-1j * w * dt)))[None, :].real
     assert lik.statistic(pile)[0] > 0, "un pile-up senza rumore deve sembrare un pile-up"
+    M_b, dt_b, r_b = lik.statistic(pile, best=True)
+    assert M_b[0] == lik.statistic(pile)[0] and abs(dt_b[0] - dt) < 1e-12 and abs(r_b[0] - r) < 1e-12, \
+        f"(dt, r) migliori di un pile-up senza rumore sulla griglia: {dt_b[0]}, {r_b[0]} invece di {dt}, {r}"
     print(f"OK  y(t) = correlazione OF: {rel:.0e} relativo senza rumore, {err:.0e} sigma con rumore;  M(singolo) = {lik.statistic(single)[0]:.3f} <= 0;"
           f"  M(pile-up 0.3 ms, r=0.5) = {lik.statistic(pile)[0]:.1f} > 0")

@@ -177,6 +177,10 @@ DT_EXTRA   = 0.5            # istogramma fino a (1 + DT_EXTRA) dt_max: si simula
                             # in dt, quindi stessa statistica per bin), che NON entrano nel BI.
                             # Costo: +DT_EXTRA/2 sul tempo. DT_BINS*DT_EXTRA dev'essere intero. 0 = no.
 N_EXTRA    = round(DT_BINS * DT_EXTRA)
+SAVE_EVENTS = True          # con LIKELIHOOD: salva, evento per evento, M e il pile-up piu' probabile per M
+                            # (dt, r) accanto a quelli VERI, in <cartella di M>/events/
+                            # events_ch{ch}_wp{wp}_seed{seed}[_v2].npz (singoli, pile-up e, con DT_EXTRA, i
+                            # pile-up oltre dt_max). ~1-2 MB per punto e seed. Solo con GEN_V2 (dt e r veri).
 if abs(N_EXTRA - DT_BINS * DT_EXTRA) > 1e-9:
     raise SystemExit(f"[ERROR] DT_BINS * DT_EXTRA = {DT_BINS * DT_EXTRA} non e' intero: i bin oltre dt_max "
                      f"non avrebbero la stessa larghezza")
@@ -186,8 +190,9 @@ _V2 = "_v2" if GEN_V2 else ""
 OUT_NAME = (f"BI_mc_error_m205{_V2}.csv" if N_SEEDS == 1
             else f"BI_mc_error_m205{_V2}_seeds{N_SEEDS}.csv")
 DT_NAME = OUT_NAME.replace("BI_mc_error", "rejection_vs_dt")
-if DT_BINS and not GEN_V2:
-    raise SystemExit("[ERROR] DT_BINS richiede GEN_V2 = True (simulate_psd non da' il ritardo degli eventi)")
+if (DT_BINS or SAVE_EVENTS) and not GEN_V2:
+    raise SystemExit("[ERROR] DT_BINS e SAVE_EVENTS richiedono GEN_V2 = True (simulate_psd non da' dt e r "
+                     "degli eventi)")
 
 # ── Esecuzione sul cluster PBS: un job per punto ────────────────────────────────────────────────
 SUBMIT_MODE       = "qsub"  # "qsub" = un job per punto ; "local" = in sequenza, qui (debug)
@@ -566,17 +571,30 @@ def run_pair(channel, wp, rows, seed=SEED, likelihood=None):
     meanpulse, nps = load_row_inputs(channel, wp)
     S, w, _ = an.compute_H(meanpulse, nps, np.hanning, sampling_rate=SAMPLING_RATE)
     filters = [load_filters(f, channel, wp, nps, r) for f, r in zip(FOLDERS, rows)]
-    stats = () if likelihood is None else (lambda p: -likelihood.statistic(p),)
-    info = []                       # ritardo di ogni pile-up (solo GEN_V2), per DT_BINS
+    best = {}                       # (dt, r) piu' probabili per M, blocco per blocco (SAVE_EVENTS)
+
+    def stats(key):
+        """-M per simulate_psd*; con SAVE_EVENTS conserva anche (dt, r) migliori di ogni evento."""
+        if likelihood is None:
+            return ()
+        if not SAVE_EVENTS:
+            return (lambda p: -likelihood.statistic(p),)
+
+        def stat(p):
+            M, dt_b, r_b = likelihood.statistic(p, best=True)
+            best.setdefault(key, []).append((dt_b, r_b))
+            return -M
+        return (stat,)
+    info = []                       # ritardo e r veri di ogni pile-up (solo GEN_V2)
     if GEN_V2:      # fotoni + energia nella ROI + shift sub-campione + baseline sul pretrigger
         kw = dict(n_photons=fn.n_photons(channel, cupid=CUPID), e_roi=fn.E_ROI_MEV,
                   shift_max=1.0 / SAMPLING_RATE, jitter_max=jitter)
-        singles = simulate_psd_v2(S, nps, w, filters, signal_amp, 0.0, seed, stats, **kw)
-        pileups = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats,
+        singles = simulate_psd_v2(S, nps, w, filters, signal_amp, 0.0, seed, stats("single"), **kw)
+        pileups = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_max, seed, stats("pileup"),
                                   info_out=info, **kw)
     else:
-        singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats, jitter)
-        pileups = simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats, jitter)
+        singles = simulate_psd(S, nps, w, filters, signal_amp, 0.0, seed, stats("single"), jitter)
+        pileups = simulate_psd(S, nps, w, filters, signal_amp, dt_max, seed, stats("pileup"), jitter)
     out = [bi_from(s, p, K) for s, p in zip(singles, pileups)]
     if DT_BINS:
         dt = np.concatenate([d["dt"] for d in info])
@@ -587,7 +605,7 @@ def run_pair(channel, wp, rows, seed=SEED, likelihood=None):
             # Non entrano nel BI. Stessa finestra di ricerca del massimo (jitter) della campagna: e'
             # l'algoritmo cosi' com'e', anche M (prior su [0, dt_max]).
             info_x = []
-            extra = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_hi, seed, stats, info_out=info_x,
+            extra = simulate_psd_v2(S, nps, w, filters, signal_amp, dt_hi, seed, stats("extra"), info_out=info_x,
                                     nsim=round(NSIM * DT_EXTRA), dt_min=dt_max, **kw)
             dt = np.concatenate([dt] + [d["dt"] for d in info_x])
             disc = [np.concatenate([a, b]) for a, b in zip(disc, extra)]
@@ -595,7 +613,28 @@ def run_pair(channel, wp, rows, seed=SEED, likelihood=None):
         n = np.bincount(idx, minlength=nb)
         for o, x in zip(out, disc):
             o["dt_hist"] = (dt_max, dt_hi, n, np.bincount(idx, weights=x < o["cut"], minlength=nb).astype(int))
+    if likelihood is not None and SAVE_EVENTS:      # M, (dt, r) migliori e veri, evento per evento
+        f32 = lambda x: np.asarray(x, dtype=np.float32)
+        m = out[-1]
+        ev = dict(dt_max=dt_max, M_cut=-m["cut"], M_single=f32(-m["psd_single"]), M_pileup=f32(-m["psd_pileup"]),
+                  dt_pileup=f32(np.concatenate([d["dt"] for d in info])),
+                  r_pileup=f32(np.concatenate([d["r"] for d in info])))
+        if DT_BINS and N_EXTRA:
+            ev.update(M_extra=f32(-extra[-1]), dt_extra=f32(np.concatenate([d["dt"] for d in info_x])),
+                      r_extra=f32(np.concatenate([d["r"] for d in info_x])))
+        for key, b in best.items():
+            ev[f"dt_hat_{key}"] = f32(np.concatenate([x[0] for x in b]))
+            ev[f"r_hat_{key}"] = f32(np.concatenate([x[1] for x in b]))
+        m["events"] = ev
     return out if likelihood is None else (out[:-1], out[-1])
+
+
+def save_events(folder_dir, channel, wp, vbias, seed, events):
+    """Il file evento per evento di M (vedi SAVE_EVENTS): un .npz per punto e seed, scritto da un solo
+    job, quindi senza lock. Usata da run_worker."""
+    path = os.path.join(folder_dir, "events", f"events_ch{channel}_wp{wp}_seed{seed}{_V2}.npz")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savez_compressed(path, channel=channel, wp=wp, vbias=vbias, seed=seed, gen=GEN_TEMPLATE, **events)
 
 
 def write_dt_hist(folder_dir, channel, wp, vbias, seed, filt, res):
@@ -731,6 +770,8 @@ def run_worker(channel, wp):
                 BI_mc=res_m["BI_mc"], sigma_BI=res_m["sigma_BI"], rp=res_m["rp"],
                 sigma_rp=res_m["sigma_rp"], nsim=NSIM, ratio=""))
             write_dt_hist(d, channel, wp, rows[0]["vbias"], seed, "likelihood", res_m)
+            if SAVE_EVENTS:
+                save_events(d, channel, wp, float(rows[0]["vbias"]), seed, res_m["events"])
             bi_y = results[0]["BI_mc"]                    # RESULTS_NAME, sugli stessi eventi
             print(f"[OK] stimatore M ch {channel} wp {wp} seed {seed}: BI_mc={res_m['BI_mc']:.4e}"
                   f"  vs {FOLDERS[0]['name']} {bi_y:.4e}  ({100*(res_m['BI_mc']/bi_y-1):+.2f}%, "
