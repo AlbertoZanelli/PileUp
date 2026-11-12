@@ -430,14 +430,15 @@ def load_filters(f, channel, wp, nps, row):
     return H, f1, f2
 
 
-def make_likelihood(channel, wp, dt_max):
+def make_likelihood(channel, wp, dt_max, **kw):
     """Lo stimatore M del punto (src/pileup_likelihood.py), costruito UNA volta per punto sul
-    template di TRAINING di RESULTS_NAME e sulla NPS. Usata da run_worker se LIKELIHOOD."""
+    template di TRAINING di RESULTS_NAME e sulla NPS. kw: opzioni di PileupLikelihood (step, r_values;
+    default = la campagna). Usata da run_worker se LIKELIHOOD e da study_grid_m205.py."""
     f = FOLDERS[0]
     nps = load_noise(channel, wp)
     S, w, _ = an.compute_H(template_pulse(channel, wp, f["train"], f["sim"]), nps, np.hanning,
                            sampling_rate=SAMPLING_RATE)
-    return PileupLikelihood(S, nps, w, dt_max=dt_max)
+    return PileupLikelihood(S, nps, w, dt_max=dt_max, **kw)
 
 
 def point_dt(channel, vbias):
