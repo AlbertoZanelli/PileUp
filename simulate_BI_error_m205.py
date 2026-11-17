@@ -433,7 +433,12 @@ def load_filters(f, channel, wp, nps, row):
 def make_likelihood(channel, wp, dt_max, **kw):
     """Lo stimatore M del punto (src/pileup_likelihood.py), costruito UNA volta per punto sul
     template di TRAINING di RESULTS_NAME e sulla NPS. kw: opzioni di PileupLikelihood (step, r_values;
-    default = la campagna). Usata da run_worker se LIKELIHOOD e da study_grid_m205.py."""
+    default = la campagna). Usata da run_worker se LIKELIHOOD e da study_grid_m205.py.
+    t_window = dt_max + 0.1 ms (come analyse_RUN9.py): il singolo si cerca ovunque possa stare il
+    pile-up, cosi' M non usa la posizione del primo impulso nella finestra, che nei dati dipende da
+    come Octopus allinea l'evento (a meta' salita). Con il default di 0.5 ms il BI di M ai WP lenti
+    era ottimista (ch34 WP1: x0.86 sugli eventi del MC, x1.06 con gli eventi allineati a meta' salita)."""
+    kw.setdefault("t_window", dt_max + 1e-4)
     f = FOLDERS[0]
     nps = load_noise(channel, wp)
     S, w, _ = an.compute_H(template_pulse(channel, wp, f["train"], f["sim"]), nps, np.hanning,
