@@ -439,6 +439,9 @@ def make_likelihood(channel, wp, dt_max, **kw):
     come Octopus allinea l'evento (a meta' salita). Con il default di 0.5 ms il BI di M ai WP lenti
     era ottimista (ch34 WP1: x0.86 sugli eventi del MC, x1.06 con gli eventi allineati a meta' salita)."""
     kw.setdefault("t_window", dt_max + 1e-4)
+    # passo: 10 us, ma almeno dt_max/100 (100 ritardi). Ai WP lenti (dt_max fino a 2.4 ms) la finestra larga
+    # costava 6.5x; con >= 80 ritardi R cambia <= 0.09 punti (grid_study_m205), quindi il passo piu' grosso e' gratis.
+    kw.setdefault("step", max(1e-5, dt_max / 100))
     f = FOLDERS[0]
     nps = load_noise(channel, wp)
     S, w, _ = an.compute_H(template_pulse(channel, wp, f["train"], f["sim"]), nps, np.hanning,
