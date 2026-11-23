@@ -71,9 +71,11 @@ class PileupLikelihood:
         # ── 2. griglia dei tempi e funzioni per y(t)  (eq. 9) ────────────────────────────────
         # y(t) = DC + 2 sum_{k>0} Re( X_k S_k*/J_k e^{i w_k t} ): la meta' positiva, due volte.
         # t da -t_window a t_window + dt_max: serve y al tempo del primo impulso e a quello del
-        # secondo, fino a dt_max dopo.
-        self.t = np.round(np.arange(-t_window, t_window + dt_max + step / 2, step), 12)
-        self.n_t1 = int(round(2 * t_window / step)) + 1      # tempi possibili del PRIMO impulso
+        # secondo, fino a dt_max dopo. Griglia in passi interi, centrata sul template: con t_window o
+        # dt_max non multipli di step, arange dava un punto in meno di n_t1 + d_max (crash).
+        n1, nd = int(round(t_window / step)), int(round(dt_max / step))
+        self.t = np.round(np.arange(-n1, n1 + nd + 1) * step, 12)
+        self.n_t1 = 2 * n1 + 1                               # tempi possibili del PRIMO impulso
         wt = np.outer(w[self.k], self.t)
         self.cos, self.sin = np.cos(wt), np.sin(wt)
         self.filt = (np.conj(S) / nps)[self.k]               # S*/J sulle frequenze tenute
@@ -86,7 +88,7 @@ class PileupLikelihood:
 
         # ── 4. i pile-up su cui si media: ritardi (in passi di griglia) e ripartizioni ────────
         self.step = step
-        self.d_steps = np.arange(0, int(round(dt_max / step)) + 1)
+        self.d_steps = np.arange(0, nd + 1)
         self.r = np.asarray(r_values, dtype=float)
         # ||P||^2 per ogni (dt, r)  (eq. 13): norma del template di pile-up
         self.normP = np.array([((1 - self.r) ** 2 + self.r ** 2) * self.R0
